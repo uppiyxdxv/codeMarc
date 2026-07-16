@@ -157,6 +157,7 @@ const GLOBAL_LEADERBOARD = [
 ];
 
 const AVATARS = ['🧑‍💻','👩‍💻','🧑‍🚀','👩‍🚀','🧑‍🎓','👩‍🎓','🧑‍🔬','👩‍🔬','🙂','😎'];
+const SAVE_KEY = 'codearena_state';
 
 const state = {
   view:'landing',
@@ -170,9 +171,20 @@ const state = {
   code:{}, lang:{}, runResult:null,
   quizIdx:0, quizAnswers:{}, quizSubmitted:false,
   dropdownOpen:false, authMsg:null, confirmSubmitId:null,
-  interview:{phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null},
+  interview:{phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:''},
   courses:[], currentCourse:null, assignments:{}, submissions:{},
 };
+
+function saveState(){
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }catch(e){}
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(raw){ const saved = JSON.parse(raw); Object.assign(state, saved); return true; }
+  }catch(e){}
+  return false;
+}
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -254,12 +266,12 @@ function runSqlProblem(problem, code){
   return {pass:missing.length===0, missingCount:missing.length, total:problem.requiredPatterns.length};
 }
 
-/* ---- Mock Interview ---- */
-async function callClaude(system, user){
+/* ---- Mock Interview (Claude AI + offline fallback) ---- */
+async function callClaude(system, user, apiKey){
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system,messages:[{role:'user',content:user}]})
+    headers:{'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01'},
+    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system,messages:[{role:'user',content:user}]})
   });
   if(!res.ok) throw new Error('API request failed ('+res.status+')');
   const data = await res.json();
@@ -272,62 +284,152 @@ function extractJSON(text){
   try{ return JSON.parse(candidate); }catch(e){ return {questions:['Tell me about yourself.','Why do you want this role?','Describe a challenge you overcame.','Where do you see yourself in 5 years?','Why should we hire you?','Tell me about a time you worked in a team.']}; }
 }
 
+const IV_QUESTIONS = {
+  behavioral: [
+    'Tell me about a time you faced a challenge. How did you handle it?',
+    'Describe a situation where you worked as part of a team to achieve a goal.',
+    'Tell me about a time you received feedback. How did you respond?',
+    'Describe a situation where you had to meet a tight deadline.',
+    'Tell me about a project you are most proud of and why.',
+    'Describe a time you had to learn something new quickly.',
+    'Tell me about a conflict you resolved with someone.',
+    'Describe a time you showed leadership or initiative.',
+    'Tell me about a time you made a mistake and what you learned.',
+    'Describe a time you went above and beyond expectations.',
+  ],
+  motivation: [
+    'Why did you choose your career path?',
+    'What is your greatest professional achievement?',
+    'Where do you see yourself in five years?',
+    'What motivates you to do your best work?',
+    'Why are you interested in this role?',
+  ],
+};
+
+function generateInterviewQuestions(text, role){
+  const lower = text.toLowerCase();
+  const tech = [...new Set((lower.match(/\b(java|python|javascript|react|angular|spring|sql|mongodb|node|docker|aws|gcp|azure|typescript|go|rust|c\+\+|ruby|php|swift|kotlin|flask|django|vue|git|kubernetes|tensorflow|pytorch|machine learning|data science|frontend|backend|fullstack|api|cloud|devops|linux)\b/g)||[]))].slice(0,2);
+  const qs = [];
+  const used = new Set();
+  const pick = (pool) => { const opts = pool.filter(q=>!used.has(q)); if(!opts.length) return pool[0]; const p = opts[Math.floor(Math.random()*opts.length)]; used.add(p); return p; };
+  for(let i=0;i<3;i++) qs.push(pick(IV_QUESTIONS.behavioral));
+  qs.push(pick(IV_QUESTIONS.motivation).replace('this role',`the ${role} role`));
+  if(tech.length) qs.push(`Your background includes ${tech.join(' and ')}. Can you describe a project where you applied these skills?`);
+  qs.push(`Looking at your experience, what makes you a strong fit for this ${role} role?`);
+  while(qs.length<6) qs.push(pick(IV_QUESTIONS.behavioral));
+  return qs.slice(0,7);
+}
+
+function scoreAnswer(question, answer){
+  const a = answer.toLowerCase(); const wc = answer.split(/\s+/).length;
+  let s = 5; const fb = [];
+  if(wc<15){ s-=2; fb.push('Too brief — expand with specific details.'); } else if(wc>25) s+=1;
+  if(/for example|specifically|one time|i handled|i resolved|i led|i created|i built|i implemented/i.test(a)){ s+=2; fb.push('Good specific example.'); }
+  else { s-=1; fb.push('Include a real example from your experience.'); }
+  const kw = ['communicat','problem','team','leader','result','achieved','collaborat','solved','learn','mentor','delivered','improved','launched'];
+  const match = kw.filter(w=>a.includes(w)).length;
+  if(match>=3) s+=1; else fb.push('Weave in relevant skill keywords.');
+  if(/i don'?t know/i.test(a)) s=Math.min(s,3);
+  if(/achieved|result|delivered|increased|decreased|saved|improved by|reduced/i.test(a)){ s+=1; fb.push('Good use of measurable results.'); }
+  s = Math.max(1,Math.min(10,s));
+  const tips = ['Try the STAR method (Situation, Task, Action, Result).','Quantify your impact with numbers.','Connect your answer to what the role needs.','Practice your delivery for more confidence.','Be more specific about your contribution.'];
+  if(!fb.length) fb.push('Clear and relevant. Keep this level of detail.');
+  fb.push(tips[Math.floor(Math.random()*tips.length)]);
+  return {score:s, feedback:fb.slice(0,2).join(' ')};
+}
+
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+
 async function generateInterview(){
   const iv = state.interview;
   const resume = document.getElementById('iv-resume').value.trim();
   const role = document.getElementById('iv-role').value.trim()||'Software Engineer';
+  const apiKey = document.getElementById('iv-apikey').value.trim();
   if(resume.length<40){ iv.error='Paste more of your resume (experience, projects, skills).'; render(); return; }
-  iv.resumeText=resume; iv.role=role; iv.error=null; iv.loading=true; iv.phase='loading'; render();
-  try{
-    const sys="You are an experienced HR interviewer. Given a resume and target role, write 6 HR-round interview questions. Respond with ONLY valid JSON: {\"questions\":[\"...\",\"...\"]}";
-    const text = await callClaude(sys, `Target role: ${role}\nResume:\n${resume}`);
-    iv.questions = extractJSON(text).questions;
-    iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-    iv.loading=false; iv.phase='session';
-  }catch(e){ iv.loading=false; iv.phase='setup'; iv.error='Could not generate questions. Try again.'; }
-  render();
+  iv.resumeText=resume; iv.role=role; iv.apiKey=apiKey; iv.error=null; iv.loading=true; iv.phase='loading'; render();
+  if(apiKey){
+    try{
+      const sys="You are an experienced HR interviewer. Given a resume and target role, write 6 HR-round interview questions. Respond with ONLY valid JSON: {\"questions\":[\"...\",\"...\"]}";
+      const text = await callClaude(sys, `Target role: ${role}\nResume:\n${resume}`, apiKey);
+      iv.questions = extractJSON(text).questions;
+      iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
+      iv.loading=false; iv.phase='session'; saveState(); render();
+    }catch(e){
+      iv.error='Claude API error — try again or remove the key to use offline mode.'; iv.loading=false; render();
+    }
+  } else {
+    setTimeout(()=>{
+      iv.questions = generateInterviewQuestions(resume, role);
+      iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
+      iv.loading=false; iv.phase='session'; saveState(); render();
+    }, 700);
+  }
 }
 
 async function submitInterviewAnswer(){
   const iv = state.interview;
   const ans = document.getElementById('iv-answer').value.trim();
   if(!ans){ iv.error='Write an answer before submitting.'; render(); return; }
-  iv.error=null; iv.loading=true; render();
-  try{
-    const sys="You are an HR interview coach. Given one HR question and the candidate's answer, give brief feedback. Respond with ONLY JSON: {\"score\":<integer 1-10>,\"feedback\":\"2-3 sentences\"}";
-    const text = await callClaude(sys, `Question: ${iv.questions[iv.currentQ]}\nAnswer: ${ans}`);
-    const parsed = extractJSON(text);
+  iv.error=null;
+  if(iv.apiKey){
+    iv.loading=true; render();
+    try{
+      const sys="You are an HR interview coach. Given one HR question and the candidate's answer, give brief feedback. Respond with ONLY JSON: {\"score\":<integer 1-10>,\"feedback\":\"2-3 sentences\"}";
+      const text = await callClaude(sys, `Question: ${iv.questions[iv.currentQ]}\nAnswer: ${ans}`, iv.apiKey);
+      const parsed = extractJSON(text);
+      iv.answers[iv.currentQ]=ans;
+      iv.feedbacks[iv.currentQ]={score:parsed.score,feedback:parsed.feedback};
+    }catch(e){
+      iv.answers[iv.currentQ]=ans;
+      iv.feedbacks[iv.currentQ]={score:null,feedback:'Feedback unavailable from API.'};
+    }
+    iv.loading=false; saveState(); render();
+  } else {
+    const fb = scoreAnswer(iv.questions[iv.currentQ], ans);
     iv.answers[iv.currentQ]=ans;
-    iv.feedbacks[iv.currentQ]={score:parsed.score,feedback:parsed.feedback};
-  }catch(e){
-    iv.answers[iv.currentQ]=ans;
-    iv.feedbacks[iv.currentQ]={score:null,feedback:'Feedback unavailable.'};
+    iv.feedbacks[iv.currentQ]={score:fb.score, feedback:fb.feedback};
+    saveState(); render();
   }
-  iv.loading=false; render();
 }
 
 function nextInterviewQuestion(){
   const iv = state.interview;
-  if(iv.currentQ<iv.questions.length-1){ iv.currentQ++; render(); }
+  if(iv.currentQ<iv.questions.length-1){ iv.currentQ++; saveState(); render(); }
   else finishInterview();
 }
 
 async function finishInterview(){
-  const iv = state.interview; iv.loading=true; iv.phase='summary'; render();
+  const iv = state.interview;
   const scores = iv.feedbacks.map(f=>f.score).filter(s=>typeof s==='number');
-  const avg = scores.length ? scores.reduce((a,b)=>a+b,0)/scores.length : null;
-  try{
-    const sys="You are an HR interview coach summarizing a mock interview. Respond with ONLY JSON: {\"summary\":\"3-4 sentences\",\"strengths\":[\"...\",\"...\"],\"improve\":[\"...\",\"...\"]}";
-    const transcript = iv.questions.map((q,i)=>`Q${i+1}: ${q}\nA${i+1}: ${iv.answers[i]||''}`).join('\n\n');
-    const text = await callClaude(sys, `Role: ${iv.role}\n\nTranscript:\n${transcript}`);
-    iv.overall = Object.assign({avg}, extractJSON(text));
-  }catch(e){ iv.overall={avg,summary:'Summary unavailable.',strengths:[],improve:[]}; }
-  iv.loading=false; render();
+  const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10)/10 : null;
+  if(iv.apiKey){
+    iv.loading=true; iv.phase='summary'; render();
+    try{
+      const sys="You are an HR interview coach summarizing a mock interview. Respond with ONLY JSON: {\"summary\":\"3-4 sentences\",\"strengths\":[\"...\",\"...\"],\"improve\":[\"...\",\"...\"]}";
+      const transcript = iv.questions.map((q,i)=>`Q${i+1}: ${q}\nA${i+1}: ${iv.answers[i]||''}`).join('\n\n');
+      const text = await callClaude(sys, `Role: ${iv.role}\n\nTranscript:\n${transcript}`, iv.apiKey);
+      iv.overall = Object.assign({avg}, extractJSON(text));
+    }catch(e){ iv.overall={avg,summary:'Summary unavailable from API.',strengths:[],improve:[]}; }
+    iv.loading=false; saveState(); render();
+  } else {
+    const str = []; const imp = [];
+    if(avg>=7){ str.push('Strong overall performance with detailed answers.'); str.push('Good use of examples.'); }
+    else if(avg>=4){ imp.push('Add more specific examples. Use STAR method.'); str.push('Solid foundation with key points covered.'); }
+    else { imp.push('Expand answers with context, action, and result.'); imp.push('Quantify your achievements.'); }
+    if(scores.some(s=>s<5)) imp.push('Practice answering behavioral questions with real stories from your experience.');
+    let summary = avg>=8 ? `Excellent interview! Strong communication and compelling examples for the ${iv.role} role.` :
+      avg>=6 ? `Good effort! Your answers show relevant experience. Focus on STAR structure and metrics for even stronger responses.` :
+      avg>=4 ? `You have good material but need to work on structure and delivery. Prepare 5-7 stories from your experience.` :
+      `This is a good starting point. Write down specific achievements and practice describing them in 2-minute responses.`;
+    iv.overall = {avg, summary, strengths:str.slice(0,3), improve:imp.slice(0,3)};
+    iv.phase='summary'; saveState(); render();
+  }
 }
 
 function restartInterview(){
-  state.interview={phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null};
-  render();
+  const prevKey = state.interview.apiKey || '';
+  state.interview={phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:prevKey};
+  saveState(); render();
 }
 
 /* ---- RENDER ---- */
@@ -453,7 +555,7 @@ function doLogin(){
   const u = state.users[email];
   if(!u||u.password!==pass){ state.authMsg={type:'err',text:'Incorrect email or password.'}; render(); return; }
   state.currentUser = Object.assign({email}, u);
-  state.authMsg=null; nav('dashboard');
+  state.authMsg=null; saveState(); nav('dashboard');
 }
 function doSignup(){
   const name = document.getElementById('su-name').value.trim();
@@ -464,7 +566,7 @@ function doSignup(){
   if(state.users[email]){ state.authMsg={type:'err',text:'Email already registered.'}; render(); return; }
   state.users[email] = {password:pass,name,avatar:'🙂',solved:{},points:0,role:'STUDENT'};
   state.currentUser = Object.assign({email}, state.users[email]);
-  state.authMsg=null; nav('dashboard');
+  state.authMsg=null; saveState(); nav('dashboard');
 }
 function doForgot(){
   const email = document.getElementById('fp-email').value.trim();
@@ -700,8 +802,9 @@ function renderInterview(){
     <div class="interview-hero">${iv.error?`<div class="form-msg err">${esc(iv.error)}</div>`:''}
     <div class="interview-card"><div class="field"><label>Target role</label><input id="iv-role" type="text" placeholder="e.g. Backend Developer" value="${esc(iv.role)}"></div>
     <div class="field"><label>Resume</label><textarea id="iv-resume" rows="8" placeholder="Paste your experience, projects, skills here...">${esc(iv.resumeText)}</textarea></div>
+    <div class="field"><label>Claude API key <span style="color:var(--text-dim);font-weight:400;">(optional — uses offline mode if empty)</span></label><input id="iv-apikey" type="password" placeholder="sk-ant-..." value="${esc(iv.apiKey||'')}"></div>
     <button class="btn btn-primary" style="width:100%;" onclick="generateInterview()">Generate interview</button>
-    <div class="note-box" style="margin-top:12px;">HR-round style questions (behavioral, motivation, culture-fit) — not coding rounds. Generated live by Claude.</div>
+    <div class="note-box" style="margin-top:12px;">HR-round style questions (behavioral, motivation, culture-fit) — not coding rounds. Powered by Claude when API key is provided, offline engine otherwise.</div>
     </div></div>${footer()}`;
   if(iv.phase==='loading') return `${navBar()}<div class="page-head"><h1>🎤 AI mock interview</h1></div><div class="interview-hero"><div class="interview-card"><div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Preparing questions...</div></div></div>${footer()}`;
   if(iv.phase==='session'){
@@ -763,7 +866,7 @@ function createCourse(){
   const code = Math.random().toString(36).substring(2,8).toUpperCase();
   const course = {id:Date.now(),title,description:desc,code,teacherName:state.currentUser.name,assignmentCount:0,studentCount:0,assignments:[]};
   state.courses.push(course);
-  state.showCreateModal=false; render();
+  state.showCreateModal=false; saveState(); render();
 }
 function joinCourse(){
   const code = document.getElementById('join-course-code').value.trim().toUpperCase();
@@ -774,12 +877,12 @@ function joinCourse(){
     state.courses.push({id:1,title:'Data Structures',description:'Learn arrays, linked lists, trees, graphs',code:'DS101',teacherName:'Prof. Smith',assignmentCount:0,studentCount:1,assignments:[]});
   }
   const found = state.courses.find(c=>c.code===code);
-  if(found){ alert(`Joined "${found.title}"!`); state.showJoinModal=false; render(); }
+  if(found){ alert(`Joined "${found.title}"!`); state.showJoinModal=false; saveState(); render(); }
   else {
     // Auto-create a placeholder course for demo
     const c = {id:Date.now(),title:'Course '+code,description:'Joined via code',code,teacherName:'Instructor',assignmentCount:0,studentCount:1,assignments:[]};
     state.courses.push(c);
-    state.showJoinModal=false; render();
+    state.showJoinModal=false; saveState(); render();
   }
 }
 function viewCourse(courseId){
@@ -823,7 +926,7 @@ function createAssignment(){
     submissions:[],submissionCount:0,createdAt:new Date().toISOString()};
   if(!state.currentCourse.assignments) state.currentCourse.assignments=[];
   state.currentCourse.assignments.push(a);
-  state.showNewAssignmentModal=false; render();
+  state.showNewAssignmentModal=false; saveState(); render();
 }
 function viewAssignment(assignmentId){
   const c = state.currentCourse;
@@ -891,7 +994,7 @@ function submitAssignmentWork(assignmentId){
   a.submissions.push({id:Date.now(),studentName:state.currentUser.name,submittedAt:new Date().toISOString(),score:null,feedback:null,late:false,content});
   a.submissionCount = (a.submissionCount||0)+1;
   state.currentUser.submissionContent=content;
-  render();
+  saveState(); render();
 }
 function gradeSubmission(submissionId){
   const a = state.currentAssignment;
@@ -906,7 +1009,7 @@ function saveGrade(submissionId){
   const a = state.currentAssignment;
   const sub = (a.submissions||[]).find(s=>s.id===submissionId);
   if(sub){ sub.score=score; sub.feedback=feedback; }
-  state.gradingSubmission=null; render();
+  state.gradingSubmission=null; saveState(); render();
 }
 
 /* ---- SETTINGS ---- */
@@ -922,7 +1025,7 @@ function renderSettings(){
     <button class="btn btn-primary" onclick="saveSettings()">Save changes</button>
   </div></div>${footer()}`;
 }
-function pickAvatar(a){ state.currentUser.avatar=a; state.users[state.currentUser.email].avatar=a; render(); }
+function pickAvatar(a){ state.currentUser.avatar=a; state.users[state.currentUser.email].avatar=a; saveState(); render(); }
 function saveSettings(){
   const name=document.getElementById('set-name').value.trim();
   const email=document.getElementById('set-email').value.trim();
@@ -930,7 +1033,7 @@ function saveSettings(){
   const old=state.currentUser.email; const rec=state.users[old]; rec.name=name;
   if(email!==old){ delete state.users[old]; state.users[email]=rec; }
   state.currentUser=Object.assign({email},rec);
-  state.authMsg={type:'ok',text:'Profile updated.'}; render();
+  state.authMsg={type:'ok',text:'Profile updated.'}; saveState(); render();
 }
 
 /* ---- Pricing ---- */
@@ -951,6 +1054,43 @@ function renderPricing(){
       <button class="btn" style="width:100%;" onclick="nav('landing')">Contact</button>
     </div>
   </div></div>${footer()}`;
+}
+
+/* ---- SEED DEMO DATA ---- */
+function seedDemoData(){
+  if(state.courses.length>0) return;
+  const now = new Date();
+  const due1 = new Date(now); due1.setDate(due1.getDate()+7);
+  const due2 = new Date(now); due2.setDate(due2.getDate()+14);
+  state.courses.push({
+    id:1, title:'Data Structures', code:'DS101',
+    description:'Arrays, linked lists, trees, graphs — implement and analyze fundamental data structures.',
+    teacherName:'Prof. Smith', assignmentCount:3, studentCount:1,
+    assignments:[
+      {id:101,title:'Array List Implementation',description:'Implement a dynamic array with add, remove, get, and size methods.',maxScore:100,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
+      {id:102,title:'Binary Search Tree',description:'Implement insert, search, and inorder traversal for a BST.',maxScore:100,dueDate:due2.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
+      {id:103,title:'Graph BFS/DFS',description:'Implement BFS and DFS traversal on an adjacency list graph.',maxScore:80,dueDate:null,submissions:[],submissionCount:0,createdAt:now.toISOString()},
+    ]
+  });
+  state.courses.push({
+    id:2, title:'Web Development', code:'WEB202',
+    description:'HTML, CSS, JavaScript, React — build modern web apps.',
+    teacherName:'Prof. Smith', assignmentCount:2, studentCount:1,
+    assignments:[
+      {id:201,title:'Responsive Portfolio Page',description:'Build a responsive personal portfolio page using CSS Grid and Flexbox.',maxScore:100,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
+      {id:202,title:'React Todo App',description:'Create a Todo application with React including add, complete, and delete.',maxScore:100,dueDate:null,submissions:[],submissionCount:0,createdAt:now.toISOString()},
+    ]
+  });
+  state.courses.push({
+    id:3, title:'Database Systems', code:'DB303',
+    description:'SQL queries, normalization, indexing, and MongoDB.',
+    teacherName:'Dr. Patel', assignmentCount:2, studentCount:1,
+    assignments:[
+      {id:301,title:'SQL Join Queries',description:'Write SQL queries using INNER JOIN, LEFT JOIN, and subqueries on a sample database.',maxScore:80,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
+      {id:302,title:'MongoDB Aggregation',description:'Write MongoDB aggregation pipelines for grouping, sorting, and filtering.',maxScore:80,dueDate:due2.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
+    ]
+  });
+  saveState();
 }
 
 /* ---- MAIN RENDER ---- */
@@ -981,4 +1121,4 @@ function render(){
   }
 }
 document.addEventListener('click', e=>{ if(state.dropdownOpen&&!e.target.closest('.dropdown')){ state.dropdownOpen=false; render(); } });
-render();
+loadState(); seedDemoData(); render();
