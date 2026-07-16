@@ -256,11 +256,15 @@ function runSqlProblem(problem, code){
 
 /* ---- Mock Interview (backend proxy AI + offline fallback) ---- */
 async function callAnthropic(system, user, apiKey){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 35000);
   const res = await fetch('/api/ai/anthropic', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({apiKey,system,user})
+    body:JSON.stringify({apiKey,system,user}),
+    signal: controller.signal
   });
+  clearTimeout(timer);
   if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error||'Proxy request failed ('+res.status+')'); }
   const data = await res.json();
   return (data.content||[]).map(b=>b.text||'').join('\n');

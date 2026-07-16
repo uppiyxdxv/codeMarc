@@ -4,13 +4,21 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/ai")
 public class AiController {
 
-    private final RestTemplate rest = new RestTemplate();
+    private final RestTemplate rest;
+
+    public AiController() {
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Duration.ofSeconds(15).toMillis());
+        factory.setReadTimeout((int) Duration.ofSeconds(30).toMillis());
+        this.rest = new RestTemplate(factory);
+    }
 
     @PostMapping("/anthropic")
     public ResponseEntity<?> proxyAnthropic(@RequestBody Map<String, String> body) {
