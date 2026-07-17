@@ -805,7 +805,7 @@ function resetCode(id){
 }
 function runCodeRemote(q, lang, code, onlySample){
   const harness = generateHarness(q, lang, code, onlySample);
-  state.runResult=`<div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Running on server...</div>`;
+  state.runResult=`<div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Compiling & running...</div>`;
   render();
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), 90000);
@@ -1242,3 +1242,4 @@ function render(){
 }
 document.addEventListener('click', e=>{ if(state.dropdownOpen&&!e.target.closest('.dropdown')){ state.dropdownOpen=false; render(); } });
 render();
+if(API_BASE) setTimeout(()=>{ fetch(API_BASE+'/api/judge/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{"code":"print(1)","language":"python"}',signal:AbortSignal.timeout(10000)}).catch(()=>{}); }, 1000);
