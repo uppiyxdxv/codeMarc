@@ -157,7 +157,6 @@ const GLOBAL_LEADERBOARD = [
 ];
 
 const AVATARS = ['🧑‍💻','👩‍💻','🧑‍🚀','👩‍🚀','🧑‍🎓','👩‍🎓','🧑‍🔬','👩‍🔬','🙂','😎'];
-const SAVE_KEY = 'codearena_state';
 
 const state = {
   view:'landing',
@@ -174,17 +173,6 @@ const state = {
   interview:{phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:''},
   courses:[], currentCourse:null, assignments:{}, submissions:{},
 };
-
-function saveState(){
-  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }catch(e){}
-}
-function loadState(){
-  try{
-    const raw = localStorage.getItem(SAVE_KEY);
-    if(raw){ const saved = JSON.parse(raw); Object.assign(state, saved); return true; }
-  }catch(e){}
-  return false;
-}
 
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -289,14 +277,18 @@ function runSqlProblem(problem, code){
   return {pass:missing.length===0, missingCount:missing.length, total:problem.requiredPatterns.length};
 }
 
-/* ---- Mock Interview (Claude AI + offline fallback) ---- */
-async function callClaude(system, user, apiKey){
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+/* ---- Mock Interview (backend proxy AI + offline fallback) ---- */
+async function callAnthropic(system, user, apiKey){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 35000);
+  const res = await fetch('/api/ai/anthropic', {
     method:'POST',
-    headers:{'Content-Type':'application/json', 'x-api-key':apiKey, 'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,system,messages:[{role:'user',content:user}]})
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({apiKey,system,user}),
+    signal: controller.signal
   });
-  if(!res.ok) throw new Error('API request failed ('+res.status+')');
+  clearTimeout(timer);
+  if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error||'Proxy request failed ('+res.status+')'); }
   const data = await res.json();
   return (data.content||[]).map(b=>b.text||'').join('\n');
 }
@@ -332,8 +324,7 @@ const IV_QUESTIONS = {
 function generateInterviewQuestions(text, role){
   const lower = text.toLowerCase();
   const tech = [...new Set((lower.match(/\b(java|python|javascript|react|angular|spring|sql|mongodb|node|docker|aws|gcp|azure|typescript|go|rust|c\+\+|ruby|php|swift|kotlin|flask|django|vue|git|kubernetes|tensorflow|pytorch|machine learning|data science|frontend|backend|fullstack|api|cloud|devops|linux)\b/g)||[]))].slice(0,2);
-  const qs = [];
-  const used = new Set();
+  const qs = []; const used = new Set();
   const pick = (pool) => { const opts = pool.filter(q=>!used.has(q)); if(!opts.length) return pool[0]; const p = opts[Math.floor(Math.random()*opts.length)]; used.add(p); return p; };
   for(let i=0;i<3;i++) qs.push(pick(IV_QUESTIONS.behavioral));
   qs.push(pick(IV_QUESTIONS.motivation).replace('this role',`the ${role} role`));
@@ -361,8 +352,6 @@ function scoreAnswer(question, answer){
   return {score:s, feedback:fb.slice(0,2).join(' ')};
 }
 
-const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
-
 async function generateInterview(){
   const iv = state.interview;
   const resume = document.getElementById('iv-resume').value.trim();
@@ -373,20 +362,20 @@ async function generateInterview(){
   if(apiKey){
     try{
       const sys="You are an experienced HR interviewer. Given a resume and target role, write 6 HR-round interview questions. Respond with ONLY valid JSON: {\"questions\":[\"...\",\"...\"]}";
-      const text = await callClaude(sys, `Target role: ${role}\nResume:\n${resume}`, apiKey);
+      const text = await callAnthropic(sys, `Target role: ${role}\nResume:\n${resume}`, apiKey);
       iv.questions = extractJSON(text).questions;
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-      iv.loading=false; iv.phase='session'; saveState(); render();
-    }catch(e){
-      iv.error='Claude API error — try again or remove the key to use offline mode.'; iv.loading=false; render();
-    }
+      iv.loading=false; iv.phase='session';
+    }catch(e){ iv.loading=false; iv.error='Claude error — check your API key and try again, or leave key empty for offline mode.'; render(); return; }
   } else {
     setTimeout(()=>{
       iv.questions = generateInterviewQuestions(resume, role);
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-      iv.loading=false; iv.phase='session'; saveState(); render();
+      iv.loading=false; iv.phase='session'; render();
     }, 700);
+    return;
   }
+  render();
 }
 
 async function submitInterviewAnswer(){
@@ -398,26 +387,26 @@ async function submitInterviewAnswer(){
     iv.loading=true; render();
     try{
       const sys="You are an HR interview coach. Given one HR question and the candidate's answer, give brief feedback. Respond with ONLY JSON: {\"score\":<integer 1-10>,\"feedback\":\"2-3 sentences\"}";
-      const text = await callClaude(sys, `Question: ${iv.questions[iv.currentQ]}\nAnswer: ${ans}`, iv.apiKey);
+      const text = await callAnthropic(sys, `Question: ${iv.questions[iv.currentQ]}\nAnswer: ${ans}`, iv.apiKey);
       const parsed = extractJSON(text);
       iv.answers[iv.currentQ]=ans;
       iv.feedbacks[iv.currentQ]={score:parsed.score,feedback:parsed.feedback};
     }catch(e){
       iv.answers[iv.currentQ]=ans;
-      iv.feedbacks[iv.currentQ]={score:null,feedback:'Feedback unavailable from API.'};
+      iv.feedbacks[iv.currentQ]={score:null,feedback:'Feedback unavailable from AI.'};
     }
-    iv.loading=false; saveState(); render();
+    iv.loading=false; render();
   } else {
     const fb = scoreAnswer(iv.questions[iv.currentQ], ans);
     iv.answers[iv.currentQ]=ans;
     iv.feedbacks[iv.currentQ]={score:fb.score, feedback:fb.feedback};
-    saveState(); render();
+    render();
   }
 }
 
 function nextInterviewQuestion(){
   const iv = state.interview;
-  if(iv.currentQ<iv.questions.length-1){ iv.currentQ++; saveState(); render(); }
+  if(iv.currentQ<iv.questions.length-1){ iv.currentQ++; render(); }
   else finishInterview();
 }
 
@@ -430,10 +419,10 @@ async function finishInterview(){
     try{
       const sys="You are an HR interview coach summarizing a mock interview. Respond with ONLY JSON: {\"summary\":\"3-4 sentences\",\"strengths\":[\"...\",\"...\"],\"improve\":[\"...\",\"...\"]}";
       const transcript = iv.questions.map((q,i)=>`Q${i+1}: ${q}\nA${i+1}: ${iv.answers[i]||''}`).join('\n\n');
-      const text = await callClaude(sys, `Role: ${iv.role}\n\nTranscript:\n${transcript}`, iv.apiKey);
+      const text = await callAnthropic(sys, `Role: ${iv.role}\n\nTranscript:\n${transcript}`, iv.apiKey);
       iv.overall = Object.assign({avg}, extractJSON(text));
-    }catch(e){ iv.overall={avg,summary:'Summary unavailable from API.',strengths:[],improve:[]}; }
-    iv.loading=false; saveState(); render();
+    }catch(e){ iv.overall={avg,summary:'Summary unavailable.',strengths:[],improve:[]}; }
+    iv.loading=false; render();
   } else {
     const str = []; const imp = [];
     if(avg>=7){ str.push('Strong overall performance with detailed answers.'); str.push('Good use of examples.'); }
@@ -445,14 +434,14 @@ async function finishInterview(){
       avg>=4 ? `You have good material but need to work on structure and delivery. Prepare 5-7 stories from your experience.` :
       `This is a good starting point. Write down specific achievements and practice describing them in 2-minute responses.`;
     iv.overall = {avg, summary, strengths:str.slice(0,3), improve:imp.slice(0,3)};
-    iv.phase='summary'; saveState(); render();
+    iv.phase='summary'; render();
   }
 }
 
 function restartInterview(){
   const prevKey = state.interview.apiKey || '';
   state.interview={phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:prevKey};
-  saveState(); render();
+  render();
 }
 
 /* ---- RENDER ---- */
@@ -578,7 +567,7 @@ function doLogin(){
   const u = state.users[email];
   if(!u||u.password!==pass){ state.authMsg={type:'err',text:'Incorrect email or password.'}; render(); return; }
   state.currentUser = Object.assign({email}, u);
-  state.authMsg=null; saveState(); nav('dashboard');
+  state.authMsg=null; nav('dashboard');
 }
 function doSignup(){
   const name = document.getElementById('su-name').value.trim();
@@ -589,7 +578,7 @@ function doSignup(){
   if(state.users[email]){ state.authMsg={type:'err',text:'Email already registered.'}; render(); return; }
   state.users[email] = {password:pass,name,avatar:'🙂',solved:{},points:0,role:'STUDENT'};
   state.currentUser = Object.assign({email}, state.users[email]);
-  state.authMsg=null; saveState(); nav('dashboard');
+  state.authMsg=null; nav('dashboard');
 }
 function doForgot(){
   const email = document.getElementById('fp-email').value.trim();
@@ -749,19 +738,6 @@ function renderConsole(q){
   if(!state.runResult) return `<div class="note-box">Click "Run sample" for first test case, or "Submit" for all.</div>`;
   return state.runResult;
 }
-function changeLang(id, lang){
-  state.lang[id]=lang;
-  const q=QUESTIONS.find(x=>x.id===id);
-  const key=id+'::'+lang;
-  if(state.code[key]===undefined) state.code[key]=scaffold(lang,q);
-  state.runResult=null; render();
-}
-function resetCode(id){
-  const q=QUESTIONS.find(x=>x.id===id);
-  const lang=state.lang[id];
-  state.code[id+'::'+lang]=scaffold(lang,q);
-  state.runResult=null; render();
-}
 function generateHarness(q, lang, code, onlySample){
   const tests = onlySample ? q.tests.slice(0,1) : q.tests;
   const tJson = JSON.stringify(tests.map(t=>({args:t.args, expected:t.expected})));
@@ -781,6 +757,19 @@ for i,t in enumerate(tests):
 `;
   }
   return code;
+}
+function changeLang(id, lang){
+  state.lang[id]=lang;
+  const q=QUESTIONS.find(x=>x.id===id);
+  const key=id+'::'+lang;
+  if(state.code[key]===undefined) state.code[key]=scaffold(lang,q);
+  state.runResult=null; render();
+}
+function resetCode(id){
+  const q=QUESTIONS.find(x=>x.id===id);
+  const lang=state.lang[id];
+  state.code[id+'::'+lang]=scaffold(lang,q);
+  state.runResult=null; render();
 }
 function runCodeRemote(q, lang, code, onlySample){
   const harness = generateHarness(q, lang, code, onlySample);
@@ -890,9 +879,9 @@ function renderInterview(){
     <div class="interview-hero">${iv.error?`<div class="form-msg err">${esc(iv.error)}</div>`:''}
     <div class="interview-card"><div class="field"><label>Target role</label><input id="iv-role" type="text" placeholder="e.g. Backend Developer" value="${esc(iv.role)}"></div>
     <div class="field"><label>Resume</label><textarea id="iv-resume" rows="8" placeholder="Paste your experience, projects, skills here...">${esc(iv.resumeText)}</textarea></div>
-    <div class="field"><label>Claude API key <span style="color:var(--text-dim);font-weight:400;">(optional — uses offline mode if empty)</span></label><input id="iv-apikey" type="password" placeholder="sk-ant-..." value="${esc(iv.apiKey||'')}"></div>
+    <div class="field"><label>Claude API key <span style="color:var(--text-dim);font-weight:400;">(optional — offline mode if empty)</span></label><input id="iv-apikey" type="password" placeholder="sk-ant-..." value="${esc(iv.apiKey||'')}"></div>
     <button class="btn btn-primary" style="width:100%;" onclick="generateInterview()">Generate interview</button>
-    <div class="note-box" style="margin-top:12px;">HR-round style questions (behavioral, motivation, culture-fit) — not coding rounds. Powered by Claude when API key is provided, offline engine otherwise.</div>
+    <div class="note-box" style="margin-top:12px;">HR-round style questions (behavioral, motivation, culture-fit) — not coding rounds. Powered by Claude via backend proxy when API key is provided, offline engine otherwise.</div>
     </div></div>${footer()}`;
   if(iv.phase==='loading') return `${navBar()}<div class="page-head"><h1>🎤 AI mock interview</h1></div><div class="interview-hero"><div class="interview-card"><div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Preparing questions...</div></div></div>${footer()}`;
   if(iv.phase==='session'){
@@ -954,7 +943,7 @@ function createCourse(){
   const code = Math.random().toString(36).substring(2,8).toUpperCase();
   const course = {id:Date.now(),title,description:desc,code,teacherName:state.currentUser.name,assignmentCount:0,studentCount:0,assignments:[]};
   state.courses.push(course);
-  state.showCreateModal=false; saveState(); render();
+  state.showCreateModal=false; render();
 }
 function joinCourse(){
   const code = document.getElementById('join-course-code').value.trim().toUpperCase();
@@ -965,12 +954,12 @@ function joinCourse(){
     state.courses.push({id:1,title:'Data Structures',description:'Learn arrays, linked lists, trees, graphs',code:'DS101',teacherName:'Prof. Smith',assignmentCount:0,studentCount:1,assignments:[]});
   }
   const found = state.courses.find(c=>c.code===code);
-  if(found){ alert(`Joined "${found.title}"!`); state.showJoinModal=false; saveState(); render(); }
+  if(found){ alert(`Joined "${found.title}"!`); state.showJoinModal=false; render(); }
   else {
     // Auto-create a placeholder course for demo
     const c = {id:Date.now(),title:'Course '+code,description:'Joined via code',code,teacherName:'Instructor',assignmentCount:0,studentCount:1,assignments:[]};
     state.courses.push(c);
-    state.showJoinModal=false; saveState(); render();
+    state.showJoinModal=false; render();
   }
 }
 function viewCourse(courseId){
@@ -1014,7 +1003,7 @@ function createAssignment(){
     submissions:[],submissionCount:0,createdAt:new Date().toISOString()};
   if(!state.currentCourse.assignments) state.currentCourse.assignments=[];
   state.currentCourse.assignments.push(a);
-  state.showNewAssignmentModal=false; saveState(); render();
+  state.showNewAssignmentModal=false; render();
 }
 function viewAssignment(assignmentId){
   const c = state.currentCourse;
@@ -1082,7 +1071,7 @@ function submitAssignmentWork(assignmentId){
   a.submissions.push({id:Date.now(),studentName:state.currentUser.name,submittedAt:new Date().toISOString(),score:null,feedback:null,late:false,content});
   a.submissionCount = (a.submissionCount||0)+1;
   state.currentUser.submissionContent=content;
-  saveState(); render();
+  render();
 }
 function gradeSubmission(submissionId){
   const a = state.currentAssignment;
@@ -1097,7 +1086,7 @@ function saveGrade(submissionId){
   const a = state.currentAssignment;
   const sub = (a.submissions||[]).find(s=>s.id===submissionId);
   if(sub){ sub.score=score; sub.feedback=feedback; }
-  state.gradingSubmission=null; saveState(); render();
+  state.gradingSubmission=null; render();
 }
 
 /* ---- SETTINGS ---- */
@@ -1113,7 +1102,7 @@ function renderSettings(){
     <button class="btn btn-primary" onclick="saveSettings()">Save changes</button>
   </div></div>${footer()}`;
 }
-function pickAvatar(a){ state.currentUser.avatar=a; state.users[state.currentUser.email].avatar=a; saveState(); render(); }
+function pickAvatar(a){ state.currentUser.avatar=a; state.users[state.currentUser.email].avatar=a; render(); }
 function saveSettings(){
   const name=document.getElementById('set-name').value.trim();
   const email=document.getElementById('set-email').value.trim();
@@ -1121,7 +1110,7 @@ function saveSettings(){
   const old=state.currentUser.email; const rec=state.users[old]; rec.name=name;
   if(email!==old){ delete state.users[old]; state.users[email]=rec; }
   state.currentUser=Object.assign({email},rec);
-  state.authMsg={type:'ok',text:'Profile updated.'}; saveState(); render();
+  state.authMsg={type:'ok',text:'Profile updated.'}; render();
 }
 
 /* ---- Pricing ---- */
@@ -1142,43 +1131,6 @@ function renderPricing(){
       <button class="btn" style="width:100%;" onclick="nav('landing')">Contact</button>
     </div>
   </div></div>${footer()}`;
-}
-
-/* ---- SEED DEMO DATA ---- */
-function seedDemoData(){
-  if(state.courses.length>0) return;
-  const now = new Date();
-  const due1 = new Date(now); due1.setDate(due1.getDate()+7);
-  const due2 = new Date(now); due2.setDate(due2.getDate()+14);
-  state.courses.push({
-    id:1, title:'Data Structures', code:'DS101',
-    description:'Arrays, linked lists, trees, graphs — implement and analyze fundamental data structures.',
-    teacherName:'Prof. Smith', assignmentCount:3, studentCount:1,
-    assignments:[
-      {id:101,title:'Array List Implementation',description:'Implement a dynamic array with add, remove, get, and size methods.',maxScore:100,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
-      {id:102,title:'Binary Search Tree',description:'Implement insert, search, and inorder traversal for a BST.',maxScore:100,dueDate:due2.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
-      {id:103,title:'Graph BFS/DFS',description:'Implement BFS and DFS traversal on an adjacency list graph.',maxScore:80,dueDate:null,submissions:[],submissionCount:0,createdAt:now.toISOString()},
-    ]
-  });
-  state.courses.push({
-    id:2, title:'Web Development', code:'WEB202',
-    description:'HTML, CSS, JavaScript, React — build modern web apps.',
-    teacherName:'Prof. Smith', assignmentCount:2, studentCount:1,
-    assignments:[
-      {id:201,title:'Responsive Portfolio Page',description:'Build a responsive personal portfolio page using CSS Grid and Flexbox.',maxScore:100,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
-      {id:202,title:'React Todo App',description:'Create a Todo application with React including add, complete, and delete.',maxScore:100,dueDate:null,submissions:[],submissionCount:0,createdAt:now.toISOString()},
-    ]
-  });
-  state.courses.push({
-    id:3, title:'Database Systems', code:'DB303',
-    description:'SQL queries, normalization, indexing, and MongoDB.',
-    teacherName:'Dr. Patel', assignmentCount:2, studentCount:1,
-    assignments:[
-      {id:301,title:'SQL Join Queries',description:'Write SQL queries using INNER JOIN, LEFT JOIN, and subqueries on a sample database.',maxScore:80,dueDate:due1.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
-      {id:302,title:'MongoDB Aggregation',description:'Write MongoDB aggregation pipelines for grouping, sorting, and filtering.',maxScore:80,dueDate:due2.toISOString().slice(0,16),submissions:[],submissionCount:0,createdAt:now.toISOString()},
-    ]
-  });
-  saveState();
 }
 
 /* ---- MAIN RENDER ---- */
@@ -1211,7 +1163,7 @@ function render(){
     if(el && typeof CodeMirror !== 'undefined'){
       if(state._cm) try{ state._cm.toTextArea(); }catch(e){}
       const modeMap = {javascript:'javascript',java:'text/x-java',python:'python',c:'text/x-csrc',sql:'text/x-sql',mongodb:'text/x-sql'};
-      const opts = {
+      state._cm = CodeMirror(el, {
         value: state.code[key]||'',
         mode: modeMap[lang]||'javascript',
         theme: 'dracula',
@@ -1234,8 +1186,7 @@ function render(){
           'Alt-G': (cm) => cm.execCommand('jumpToLine'),
           'Ctrl-S': () => runCode(q?.id,true)
         }
-      };
-      state._cm = CodeMirror(el, opts);
+      });
       state._cm.on('change', (_, change)=>{
         state.code[key]=state._cm.getValue();
         if(change.origin==='paste' && change.text.length>1){
@@ -1247,8 +1198,8 @@ function render(){
       });
     }
   } else {
-    if(state._cm){ try{ state._cm.toTextArea(); }catch(e){} state._cm=null; }
+    if(state._cm){ try{ state._cm.toTextArea(); state._cm=null; }catch(e){} }
   }
 }
 document.addEventListener('click', e=>{ if(state.dropdownOpen&&!e.target.closest('.dropdown')){ state.dropdownOpen=false; render(); } });
-loadState(); seedDemoData(); render();
+render();
