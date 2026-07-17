@@ -245,8 +245,6 @@ function runJsProblem(problem, code, onlySample){
   });
   return {results};
 }
-  });
-}
 
 function matchDoc(doc, query){
   for(const key in query){
