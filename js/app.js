@@ -783,12 +783,26 @@ for i,t in enumerate(tests):
   if(lang==='java'){
     const lines = code.split('\n');
     const body = lines.filter(l=>!l.trim().startsWith('package')).join('\n');
+    const toJava = (v)=>{
+      if(v===null||v===undefined) return 'null';
+      if(typeof v==='boolean') return v?'true':'false';
+      if(typeof v==='number') return String(v);
+      if(typeof v==='string') return '"'+v.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
+      if(Array.isArray(v)){
+        if(v.length===0) return 'new int[]{}';
+        const first = v[0];
+        if(Array.isArray(first)) return 'new int[][]{'+v.map(row=>'{'+row.join(',')+'}').join(',')+'}';
+        if(typeof first==='string') return 'new String[]{'+v.map(s=>'"'+s.replace(/"/g,'\\"')+'"').join(',')+'}';
+        return 'new int[]{'+v.join(',')+'}';
+      }
+      return '""+v';
+    };
     return `import java.util.*;
 public class Solution {
 ${body}
   public static void main(String[] a){
     Solution s = new Solution();
-    Object r = s.${fn}(${tests[0].args.map(a=>JSON.stringify(a)).join(',')});
+    Object r = s.${fn}(${tests[0].args.map(toJava).join(',')});
     System.out.println(r!=null&&r.getClass().isArray()?java.util.Arrays.deepToString(new Object[]{r}):String.valueOf(r));
   }
 }`;
