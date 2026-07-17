@@ -787,13 +787,19 @@ function runCodeRemote(q, lang, code, onlySample){
   state.runResult=`<div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Running on server...</div>`;
   render();
   const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 35000);
+  const timer = setTimeout(()=>controller.abort(), 90000);
   fetch(API_BASE+'/api/judge/run', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({code:harness, language:lang}),
     signal:controller.signal
-  }).then(r=>r.json()).then(data=>{
+  }).then(async r=>{
     clearTimeout(timer);
+    if(!r.ok){
+      const text = await r.text().catch(()=>'');
+      throw new Error(`Server ${r.status}: ${text.slice(0,200)}`);
+    }
+    return r.json();
+  }).then(data=>{
     const stdErr = (data.stderr||'').trim();
     const stdOut = (data.stdout||'').trim();
     if(data.error){ state.runResult=`<div class="tcase fail"><div class="thead"><span>Server Error</span><span class="no">✗</span></div>${esc(data.error)}</div>`; render(); return; }
@@ -815,7 +821,8 @@ function runCodeRemote(q, lang, code, onlySample){
     render();
   }).catch(e=>{
     clearTimeout(timer);
-    state.runResult=`<div class="tcase fail"><div class="thead"><span>Network Error</span><span class="no">✗</span></div><div>${esc(e.message)}</div></div>`;
+    const msg = e.name==='AbortError'?'Request timed out (90s). Render may be cold-starting — try again.':e.message;
+    state.runResult=`<div class="tcase fail"><div class="thead"><span>Network Error</span><span class="no">✗</span></div><div>${esc(msg)}</div></div>`;
     render();
   });
 }
