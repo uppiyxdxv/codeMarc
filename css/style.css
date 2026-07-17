@@ -157,6 +157,15 @@ tr:last-child td{border-bottom:none;}
 .editor-bar select{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--mono);}
 .editor-bar .ebtns{display:flex;gap:6px;}
 textarea.editor{flex:1;background:#0D1424;color:#DCE4F7;border:none;padding:16px 18px;font-family:var(--mono);font-size:13px;line-height:1.6;resize:none;outline:none;tab-size:2;}
+.editor .CodeMirror{flex:1;height:auto;min-height:280px;background:#0D1424;color:#DCE4F7;font-family:var(--mono);font-size:13px;line-height:1.6;}
+.editor .CodeMirror-gutters{background:#0D1424;border-right:1px solid #1a1f35;}
+.editor .CodeMirror-linenumber{color:#3a4470;padding:0 8px;}
+.editor .CodeMirror-cursor{border-left:2px solid #F5A623;}
+.editor .CodeMirror-selected{background:#1e2a4a;}
+.editor .CodeMirror-focused .CodeMirror-selected{background:#2a3a5a;}
+.editor .CodeMirror-matchingbracket{background:#2a3a5a;outline:1px solid #4a5a7a;}
+.editor .CodeMirror-lint-mark-error{color:#F87171;}
+.editor .CodeMirror-lint-marker-error{background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABmJLR0QA/wD/AP+gvaeTAAAA9klEQVQoU5WSvUoDQRSFv5nZ3SSQRYKFCBZiwU+w8w18A+2tfQcLHyG9SBAEe4tgJ6SwE38fYa0sRIIIhll3hM0mu2jifDBz7jffnMsM/B8hyZ7ktaSx2JxKDkpeSRqLzVGSphV5I2ks1iQ5UnQm6Y2kMQBE0oSksaidpDdCR1Jb0lhU1EFh7gDMJA0ApJqsUFIWAO4l9UsaA4BtSTeSdCvpQtJI7EHS2ix6Iekt6zvofZKui+KxrPeSPkoai+1I6kkai92XNF6VPUv6kDQAkGQNJK2UZVkCuEhyCWAp6YckdbP8LaATpe5KkpJKAP4BYRJ6FdI1KFQAAAAASUVORK5CYII=);background-size:contain;}
 .console{height:210px;border-top:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;}
 .console-head{display:flex;gap:6px;padding:7px 12px;border-bottom:1px solid var(--border);}
 .console-tab{font-size:11.5px;padding:4px 10px;border-radius:5px;color:var(--text-muted);background:transparent;border:1px solid transparent;}

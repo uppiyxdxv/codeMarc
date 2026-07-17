@@ -716,7 +716,7 @@ function renderCoding(){
       <select onchange="changeLang('${q.id}',this.value)">${langOptions.map(o=>`<option value="${o.v}" ${o.v===lang?'selected':''}>${o.l}</option>`).join('')}</select>
       <div class="ebtns"><button class="btn btn-sm" onclick="resetCode('${q.id}')">Reset</button><button class="btn btn-sm" onclick="runCode('${q.id}',true)">Run sample</button><button class="btn btn-primary btn-sm" onclick="askSubmitConfirm('${q.id}')">Submit</button></div>
     </div>
-    <textarea class="editor" id="code-editor" spellcheck="false" oninput="state.code['${key}']=this.value">${esc(code)}</textarea>
+    <div class="editor" id="code-editor"></div>
     <div class="console"><div class="console-head"><span class="console-tab active">Output</span></div><div class="console-body" id="console-body">${renderConsole(q)}</div></div>
   </div></div>
   ${state.confirmSubmitId===q.id?`<div class="modal-overlay" onclick="if(event.target===this)cancelSubmit()"><div class="modal-box"><h4>Submit solution?</h4><p>Runs all test cases for "${esc(q.title)}". Pass all to earn ${q.points} points.</p><div class="modal-actions"><button class="btn" onclick="cancelSubmit()">Cancel</button><button class="btn btn-primary" onclick="confirmSubmitYes()">Submit</button></div></div></div>`:''}`;
@@ -1116,8 +1116,30 @@ function render(){
   }
   app.innerHTML = html;
   if(state.view==='coding'){
-    const ta = document.getElementById('code-editor');
-    if(ta) ta.addEventListener('keydown', e=>{ if(e.key==='Tab'){ e.preventDefault(); const s=ta.selectionStart,en=ta.selectionEnd; ta.value=ta.value.slice(0,s)+'  '+ta.value.slice(en); ta.selectionStart=ta.selectionEnd=s+2; } });
+    const q = QUESTIONS.find(x=>x.id===state.currentProblem);
+    const lang = state.lang[q?.id];
+    const key = q?.id+'::'+lang;
+    const el = document.getElementById('code-editor');
+    if(el && typeof CodeMirror !== 'undefined'){
+      if(state._cm) try{ state._cm.toTextArea(); }catch(e){}
+      const modeMap = {javascript:'javascript',java:'text/x-java',python:'python',c:'text/x-csrc',sql:'text/x-sql',mongodb:'text/x-sql'};
+      const opts = {
+        value: state.code[key]||'',
+        mode: modeMap[lang]||'javascript',
+        theme: 'dracula',
+        indentUnit: 2, tabSize: 2,
+        lineNumbers: true,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        gutters: ['CodeMirror-lint-markers'],
+        lint: lang==='javascript' ? {esversion: 6} : false,
+        extraKeys: {'Ctrl-S': ()=>runCode(q?.id,true)}
+      };
+      state._cm = CodeMirror(el, opts);
+      state._cm.on('change', ()=>{ state.code[key]=state._cm.getValue(); });
+    }
+  } else {
+    if(state._cm){ try{ state._cm.toTextArea(); }catch(e){} state._cm=null; }
   }
 }
 document.addEventListener('click', e=>{ if(state.dropdownOpen&&!e.target.closest('.dropdown')){ state.dropdownOpen=false; render(); } });
