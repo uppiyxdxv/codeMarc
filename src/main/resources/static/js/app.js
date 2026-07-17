@@ -3,7 +3,7 @@
    Competitive coding + Virtual classroom platform
    ============================================================= */
 
-const API_BASE = window.location.origin;
+const API_BASE = (window.location.hostname.includes('github.io')||window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1')?'https://codemarc.onrender.com':'';
 
 const DOMAINS = [
   {id:'java',name:'Java',icon:'☕',blurb:'OOP & core language problems',color:'#F5A623'},
