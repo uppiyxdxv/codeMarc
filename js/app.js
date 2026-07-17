@@ -780,6 +780,19 @@ for i,t in enumerate(tests):
     print(json.dumps({"test":i+1,"pass":false,"error":traceback.format_exc(),"input":json.dumps(t['args'])}))
 `;
   }
+  if(lang==='java'){
+    const lines = code.split('\n');
+    const body = lines.filter(l=>!l.trim().startsWith('package')).join('\n');
+    return `import java.util.*;
+public class Solution {
+${body}
+  public static void main(String[] a){
+    Solution s = new Solution();
+    Object r = s.${fn}(${tests[0].args.map(a=>JSON.stringify(a)).join(',')});
+    System.out.println(r!=null&&r.getClass().isArray()?java.util.Arrays.deepToString(new Object[]{r}):String.valueOf(r));
+  }
+}`;
+  }
   return code;
 }
 function runCodeRemote(q, lang, code, onlySample){
