@@ -221,9 +221,31 @@ function deepEqual(a,b){
   return a===b;
 }
 
+function checkSyntax(code){
+  const errs = []; const lines = code.split('\n');
+  try{ new Function(code); }catch(e){
+    const m = e.message.match(/at .*?(\d+)/);
+    const ln = m ? parseInt(m[1]) : 0;
+    errs.push({line:ln, ch:0, message:e.message.replace(/\s+at\s+.*/,''), severity:'error'});
+  }
+  if(typeof JSHINT !== 'undefined'){
+    JSHINT(code, {esversion:6});
+    JSHINT.errors.forEach(e=>{ if(e) errs.push({line:e.line-1, ch:e.character-1, message:e.reason, severity:'error'}); });
+  }
+  return errs;
+}
+function renderCodeErrors(errs, code){
+  if(!errs.length) return '';
+  const lines = code.split('\n');
+  return `<div class="tcase fail"><div class="thead"><span>Compilation Errors (${errs.length})</span><span class="no">✗ Blocked</span></div>
+    ${errs.map(e=>`<div class="lint-err"><span class="err-loc">Line ${e.line+1}:${e.ch+1}</span> ${esc(e.message)}</div>
+    <pre class="err-code">${esc(lines[e.line]||'')}<span class="err-caret">${' '.repeat(e.ch)+'^'}</span></pre></div>`).join('')}</div>`;
+}
 function runJsProblem(problem, code, onlySample){
-  const tests = onlySample ? [problem.tests[0]] : problem.tests;
-  return tests.map(t=>{
+  const errs = checkSyntax(code);
+  if(errs.length) return {errors:errs};
+  const tests = onlySample ? problem.tests.slice(0,1) : problem.tests;
+  const results = tests.map(t => {
     try{
       const wrapper = new Function(code+`\nreturn ${problem.fn}(...arguments);`);
       const actual = wrapper(...t.args);
@@ -232,6 +254,9 @@ function runJsProblem(problem, code, onlySample){
     }catch(e){
       return {input:JSON.stringify(t.args), expected:JSON.stringify(t.expected), actual:'Error: '+e.message, pass:false};
     }
+  });
+  return {results};
+}
   });
 }
 
@@ -747,9 +772,14 @@ function runCode(id, onlySample){
   const code=state.code[id+'::'+lang]||'';
   if(q.mode==='js'){
     if(lang!=='javascript'){ render(); return; }
-    const results=runJsProblem(q,code,onlySample);
-    const allPass=results.every(r=>r.pass);
-    state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input)}</div><div>Expected: ${esc(r.expected)}</div><div>Got: ${esc(r.actual)}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed. All ${results.length} tests checked.</div>`:''}`;
+    const out=runJsProblem(q,code,onlySample);
+    if(out.errors){
+      state.runResult=renderCodeErrors(out.errors, code);
+    } else {
+      const results=out.results;
+      const allPass=results.every(r=>r.pass);
+      state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input)}</div><div>Expected: ${esc(r.expected)}</div><div>Got: ${esc(r.actual)}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed. All ${results.length} tests checked.</div>`:''}`;
+    }
   } else if(q.mode==='mongo'){
     const r=runMongoProblem(q,code);
     state.runResult=r.error?`<div class="tcase fail"><div class="thead"><span>Error</span><span class="no">✗</span></div>${esc(r.error)}</div>`:`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Result</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Match':'✗ No match'}</span></div><div>Matched ${r.matched.length} docs: ${r.matched.map(d=>d.name).join(', ')||'(none)'}</div></div>${(!onlySample&&r.pass)?markSolved(q):''}`;

@@ -239,6 +239,10 @@ textarea.editor{flex:1;background:#0D1424;color:#DCE4F7;border:none;padding:16px
 .grade-input{width:60px;padding:4px 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:13px;text-align:center;}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
 .empty-state{padding:40px 20px;text-align:center;color:var(--text-dim);font-size:14px;}
+.lint-err{padding:6px 10px;margin:4px 0;background:rgba(248,113,113,.08);border-radius:6px;font-size:12.5px;color:#FCA5A5;}
+.err-loc{font-family:var(--mono);color:#FDA4AF;font-weight:700;margin-right:6px;}
+.err-code{font-family:var(--mono);font-size:11.5px;color:var(--text-dim);margin:2px 0 6px 10px;padding:4px 8px;background:var(--surface-2);border-radius:4px;white-space:pre-wrap;overflow-x:auto;}
+.err-caret{color:#F87171;font-weight:700;}
 @media(max-width:900px){
   .hero{grid-template-columns:1fr;}.domain-grid{grid-template-columns:repeat(2,1fr);}.feat-grid,.resource-grid,.price-grid,.course-grid,.grid-2{grid-template-columns:1fr;}
   .dash-grid,.code-page{grid-template-columns:1fr;}.code-page{height:auto;}.nav-links{display:none;}.hero h1{font-size:32px;}
