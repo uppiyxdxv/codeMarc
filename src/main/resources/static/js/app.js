@@ -1079,14 +1079,22 @@ function render(){
         value: state.code[key]||'',
         mode: modeMap[lang]||'javascript',
         theme: 'dracula',
-        indentUnit: 2,
-        tabSize: 2,
+        indentUnit: 2, tabSize: 2, indentWithTabs: false,
+        electricChars: true,
         lineNumbers: true,
         matchBrackets: true,
         autoCloseBrackets: true,
-        extraKeys: {'Ctrl-S': ()=>runCode(q?.id,true)}
+        extraKeys: {'Tab': (cm) => cm.execCommand('insertSoftTab'), 'Ctrl-S': ()=>runCode(q?.id,true)}
       });
-      state._cm.on('change', ()=>{ state.code[key]=state._cm.getValue(); });
+      state._cm.on('change', (_, change)=>{
+        state.code[key]=state._cm.getValue();
+        if(change.origin==='paste' && change.text.length>1){
+          setTimeout(()=>{
+            for(let i=change.from.line; i<=change.from.line+change.text.length-1; i++)
+              state._cm.indentLine(i, 'smart');
+          }, 10);
+        }
+      });
     }
   } else {
     if(state._cm){ try{ state._cm.toTextArea(); state._cm=null; }catch(e){} }
