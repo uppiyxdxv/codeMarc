@@ -366,14 +366,13 @@ async function generateInterview(){
       iv.questions = extractJSON(text).questions;
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
       iv.loading=false; iv.phase='session';
-    }catch(e){ iv.loading=false; iv.error='Claude error — check your API key and try again, or leave key empty for offline mode.'; render(); return; }
+    }catch(e){ iv.loading=false; iv.error='Claude error — check your API key and try again, or leave key empty for offline mode.'; }
   } else {
     setTimeout(()=>{
       iv.questions = generateInterviewQuestions(resume, role);
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
       iv.loading=false; iv.phase='session'; render();
     }, 700);
-    return;
   }
   render();
 }
