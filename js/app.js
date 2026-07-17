@@ -1130,11 +1130,22 @@ function render(){
         indentUnit: 2, tabSize: 2, indentWithTabs: false,
         electricChars: true,
         lineNumbers: true,
+        styleActiveLine: {nonEmpty: true},
         matchBrackets: true,
         autoCloseBrackets: true,
-        gutters: ['CodeMirror-lint-markers'],
+        gutters: ['CodeMirror-foldgutter', 'CodeMirror-lint-markers'],
+        foldGutter: {rangeFinder: new CodeMirror.fold.combine(
+          CodeMirror.fold.brace, CodeMirror.fold.indent, CodeMirror.fold.comment
+        )},
         lint: lang==='javascript' ? {esversion: 6} : false,
-        extraKeys: {'Tab': (cm) => cm.execCommand('insertSoftTab'), 'Ctrl-S': ()=>runCode(q?.id,true)}
+        extraKeys: {
+          'Tab': (cm) => cm.execCommand('insertSoftTab'),
+          'Ctrl-F': (cm) => cm.execCommand('find'),
+          'Ctrl-H': (cm) => cm.execCommand('replace'),
+          'Ctrl-D': (cm) => cm.execCommand('findNext'),
+          'Alt-G': (cm) => cm.execCommand('jumpToLine'),
+          'Ctrl-S': () => runCode(q?.id,true)
+        }
       };
       state._cm = CodeMirror(el, opts);
       state._cm.on('change', (_, change)=>{
