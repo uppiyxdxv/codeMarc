@@ -713,7 +713,7 @@ function renderCoding(){
   const lang = state.lang[q.id];
   const key = q.id+'::'+lang;
   const code = state.code[key]!==undefined?state.code[key]:scaffold(lang,q);
-  const langOptions = q.mode==='js'?[{v:'javascript',l:'JavaScript (runs live)'},{v:'java',l:'Java (practice)'},{v:'python',l:'Python (practice)'},{v:'c',l:'C (practice)'}]:q.mode==='mongo'?[{v:'mongodb',l:'MongoDB Query'}]:[{v:'sql',l:'SQL'}];
+  const langOptions = q.mode==='js'?[{v:'javascript',l:'JavaScript (browser)'},{v:'python',l:'Python (server)'},{v:'java',l:'Java (server)'},{v:'c',l:'C (server)'}]:q.mode==='mongo'?[{v:'mongodb',l:'MongoDB Query'}]:[{v:'sql',l:'SQL'}];
   const examples = deriveExamples(q);
   return `${navBar()}
   <div class="code-page"><div class="qpanel">
@@ -735,10 +735,28 @@ function renderCoding(){
 }
 function renderConsole(q){
   if(!q.mode) return '';
-  const lang = state.lang[q.id];
-  if(q.mode==='js'&&lang!=='javascript') return `<div class="note-box">Switch to "JavaScript (runs live)" to run test cases. Other languages are practice-only in this demo.</div>`;
   if(!state.runResult) return `<div class="note-box">Click "Run sample" for first test case, or "Submit" for all.</div>`;
   return state.runResult;
+}
+function generateHarness(q, lang, code, onlySample){
+  const tests = onlySample ? q.tests.slice(0,1) : q.tests;
+  const tJson = JSON.stringify(tests.map(t=>({args:t.args, expected:t.expected})));
+  const fn = q.fn;
+  if(lang==='python'){
+    const safe = tJson.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/</g,'\\u003c');
+    return `import json, sys, traceback
+${code}
+tests = json.loads('${safe}')
+for i,t in enumerate(tests):
+  try:
+    result = ${fn}(*t['args'])
+    inp = json.dumps(t['args'])
+    print(json.dumps({"test":i+1,"pass":result==t['expected'],"actual":result,"expected":t['expected'],"input":inp}))
+  except:
+    print(json.dumps({"test":i+1,"pass":false,"error":traceback.format_exc(),"input":json.dumps(t['args'])}))
+`;
+  }
+  return code;
 }
 function changeLang(id, lang){
   state.lang[id]=lang;
@@ -753,21 +771,63 @@ function resetCode(id){
   state.code[id+'::'+lang]=scaffold(lang,q);
   state.runResult=null; render();
 }
+function runCodeRemote(q, lang, code, onlySample){
+  const harness = generateHarness(q, lang, code, onlySample);
+  state.runResult=`<div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Running on server...</div>`;
+  render();
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), 35000);
+  fetch('/api/judge/run', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({code:harness, language:lang}),
+    signal:controller.signal
+  }).then(r=>r.json()).then(data=>{
+    clearTimeout(timer);
+    const stdErr = (data.stderr||'').trim();
+    const stdOut = (data.stdout||'').trim();
+    if(data.error){ state.runResult=`<div class="tcase fail"><div class="thead"><span>Server Error</span><span class="no">✗</span></div>${esc(data.error)}</div>`; render(); return; }
+    if(data.timedOut){ state.runResult=`<div class="tcase fail"><div class="thead"><span>Timed Out (10s)</span><span class="no">✗</span></div><div>Code took too long to execute.</div></div>`; render(); return; }
+    if(data.exitCode!==0 && stdErr){
+      state.runResult=renderCodeErrors([{line:0,ch:0,message:stdErr}], code);
+      render(); return;
+    }
+    if(lang==='python'){
+      const lines = stdOut.split('\n').filter(l=>l.startsWith('{'));
+      if(lines.length){
+        const results = lines.map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean);
+        const allPass = results.every(r=>r.pass);
+        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${r.test||i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input||JSON.stringify(r.args))}</div><div>Expected: ${esc(JSON.stringify(r.expected))}</div><div>Got: ${esc(r.error||JSON.stringify(r.actual))}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed.</div>`:''}`;
+        render(); return;
+      }
+    }
+    state.runResult=`<div class="tcase ${stdErr?'fail':'pass'}"><div class="thead"><span>Output</span><span class="${stdErr?'no':'ok'}">${stdErr?'Stderr':'Stdout'}</span></div><pre style="font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;margin:0;color:var(--text);">${esc(stdOut||stdErr||'(no output)')}</pre></div>`;
+    render();
+  }).catch(e=>{
+    clearTimeout(timer);
+    state.runResult=`<div class="tcase fail"><div class="thead"><span>Network Error</span><span class="no">✗</span></div><div>${esc(e.message)}</div></div>`;
+    render();
+  });
+}
 function runCode(id, onlySample){
   const q=QUESTIONS.find(x=>x.id===id);
   const lang=state.lang[id];
   const code=state.code[id+'::'+lang]||'';
   if(q.mode==='js'){
-    if(lang!=='javascript'){ render(); return; }
-    const out=runJsProblem(q,code,onlySample);
-    if(out.errors){
-      state.runResult=renderCodeErrors(out.errors, code);
-    } else {
-      const results=out.results;
-      const allPass=results.every(r=>r.pass);
-      state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input)}</div><div>Expected: ${esc(r.expected)}</div><div>Got: ${esc(r.actual)}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed. All ${results.length} tests checked.</div>`:''}`;
+    if(lang==='javascript'){
+      const out=runJsProblem(q,code,onlySample);
+      if(out.errors){
+        state.runResult=renderCodeErrors(out.errors, code);
+      } else {
+        const results=out.results;
+        const allPass=results.every(r=>r.pass);
+        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input)}</div><div>Expected: ${esc(r.expected)}</div><div>Got: ${esc(r.actual)}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed. All ${results.length} tests checked.</div>`:''}`;
+        render(); return;
+      }
     }
-  } else if(q.mode==='mongo'){
+  }
+  const remoteLangs = ['python','java','c'];
+  if(remoteLangs.includes(lang)){ runCodeRemote(q, lang, code, onlySample); return; }
+  if(q.mode==='mongo'){
     const r=runMongoProblem(q,code);
     state.runResult=r.error?`<div class="tcase fail"><div class="thead"><span>Error</span><span class="no">✗</span></div>${esc(r.error)}</div>`:`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Result</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Match':'✗ No match'}</span></div><div>Matched ${r.matched.length} docs: ${r.matched.map(d=>d.name).join(', ')||'(none)'}</div></div>${(!onlySample&&r.pass)?markSolved(q):''}`;
   } else if(q.mode==='sql'){
