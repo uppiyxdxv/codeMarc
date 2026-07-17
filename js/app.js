@@ -797,18 +797,26 @@ for i,t in enumerate(tests):
       }
       return '""+v';
     };
+    const toStr = (v)=>{
+      if(v===null||v===undefined) return '"null"';
+      if(typeof v==='boolean') return '""+'+v;
+      if(typeof v==='number') return '""+'+v;
+      if(typeof v==='string') return '"'+v.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
+      return '""+v';
+    };
+    const tcalls = tests.map((t,i)=>{
+      const jArgs = t.args.map(toJava);
+      const inpStr = JSON.stringify(t.args).replace(/"/g,'\\"');
+      const eStr = toStr(t.expected);
+      const eqCheck = Array.isArray(t.expected)?'java.util.Arrays.equals((int[])r,(int[])'+eStr+')':'r.equals('+eStr+')';
+      return `try{Object r=s.${fn}(${jArgs.join(',')});String rs=r!=null&&r.getClass().isArray()?java.util.Arrays.deepToString(new Object[]{r}).replaceAll("^\\\\[","").replaceAll("\\\\]$",""):""+r;System.out.println("{\\"test\\":"+${i+1}+",\\"pass\\":"+(${eqCheck}?"true":"false")+",\\"actual\\":\\""+rs.replaceAll("\\\\"","'")+"\\",\\"expected\\":\\""+${eStr}+"\\",\\"input\\":\\"${inpStr}\\"}");}catch(Exception e){System.out.println("{\\"test\\":"+${i+1}+",\\"pass\\":false,\\"error\\":\\""+e.getMessage().replace("\\\\"","'")+"\\"}");}`;
+    }).join('\n    ');
     return `import java.util.*;
 public class Solution {
 ${body}
   public static void main(String[] a){
     Solution s = new Solution();
-    Object r = s.${fn}(${tests[0].args.map(toJava).join(',')});
-    if(r==null) System.out.println("null");
-    else if(r.getClass().isArray()){if(r instanceof int[]) System.out.println(java.util.Arrays.toString((int[])r));
-    else if(r instanceof String[]) System.out.println(java.util.Arrays.toString((String[])r));
-    else if(r instanceof int[][]) System.out.println(java.util.Arrays.deepToString((int[][])r));
-    else System.out.println(java.util.Arrays.toString((Object[])r));}
-    else System.out.println(String.valueOf(r));
+    ${tcalls}
   }
 }`;
   }
@@ -840,7 +848,7 @@ function runCodeRemote(q, lang, code, onlySample){
       state.runResult=renderCodeErrors([{line:0,ch:0,message:stdErr}], code);
       render(); return;
     }
-    if(lang==='python'){
+    if(lang==='python'||lang==='java'){
       const lines = stdOut.split('\n').filter(l=>l.startsWith('{'));
       if(lines.length){
         const results = lines.map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean);
