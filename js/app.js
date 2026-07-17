@@ -797,13 +797,12 @@ for i,t in enumerate(tests):
       }
       return '""+v';
     };
-    const s = JSON.stringify;
+    const esc = v=>String(v).replace(/\|/g,'<pipe>').replace(/\n/g,'<nl>');
     const tcalls = tests.map((t,i)=>{
       const jArgs = t.args.map(toJava);
-      const inp = s(t.args).replace(/"/g,'\\"');
-      const exp = s(t.expected).replace(/"/g,'\\"');
-      const arrEq = Array.isArray(t.expected)?'java.util.Arrays.equals((int[])r,new int[]{'+t.expected.join(',')+'})':'String.valueOf(r).equals('+s(t.expected)+')';
-      return `try{Object r=s.${fn}(${jArgs.join(',')});String rs=r!=null&&r.getClass().isArray()?java.util.Arrays.toString((int[])r):String.valueOf(r);System.out.println("{\\"t\\":"+${i+1}+",\\"p\\":"+(${arrEq}?1:0)+",\\"a\\":\\""+rs.replace("\\\\"","'")+"\\",\\"e\\":\\"${exp}\\",\\"i\\":\\"${inp}\\"}");}catch(Exception e){System.out.println("{\\"t\\":"+${i+1}+",\\"p\\":0,\\"e\\":\\""+e.getMessage().replace("\\\\"","'")+"\\",\\"i\\":\\"${inp}\\"}");}`;
+      const inp = esc(JSON.stringify(t.args));
+      const exp = esc(JSON.stringify(t.expected));
+      return `try{Object r=s.${fn}(${jArgs.join(',')});String rs=r!=null&&r.getClass().isArray()?java.util.Arrays.toString((int[])r):String.valueOf(r);System.out.println("JR|"+(1+${i})+"|"+rs.replace("|","<pipe>")+"|${exp}|${inp}");}catch(Exception e){System.out.println("JR|"+(1+${i})+"|<err>"+e.getMessage().replace("|","<pipe>")+"|${exp}|${inp}");}`;
     }).join('\n    ');
     return `import java.util.*;
 public class Solution {
@@ -842,12 +841,31 @@ function runCodeRemote(q, lang, code, onlySample){
       state.runResult=renderCodeErrors([{line:0,ch:0,message:stdErr}], code);
       render(); return;
     }
+    if(stdOut.startsWith('COMPILE_ERROR')){
+      const msg = stdOut.replace(/^COMPILE_ERROR\n/,'').trim();
+      state.runResult=renderCodeErrors([{line:0,ch:0,message:msg}], code);
+      render(); return;
+    }
     if(lang==='python'||lang==='java'){
-      const lines = stdOut.split('\n').filter(l=>l.startsWith('{'));
+      const jsonLines = stdOut.split('\n').filter(l=>l.startsWith('{'));
+      const jrLines = stdOut.split('\n').filter(l=>l.startsWith('JR|'));
+      const lines = jsonLines.length?jsonLines:jrLines;
       if(lines.length){
-        const results = lines.map(l=>{try{const o=JSON.parse(l);return {test:o.test||o.t,pass:o.pass||o.p,expected:o.expected||o.e,actual:o.actual||o.a,input:o.input||o.i,error:o.error||o.e}}catch(e){return null}}).filter(Boolean);
+        const parse = l=>{
+          try{
+            if(l.startsWith('JR|')){
+              const parts = l.split('|');
+              const err = parts[3]?.startsWith('<err>');
+              return {test:+parts[1], pass:!err, actual:err?parts[3].replace('<err>',''):parts[3], expected:parts[4], input:parts[5]};
+            }
+            const o=JSON.parse(l);
+            return {test:o.test||o.t, pass:o.pass||o.p, expected:o.expected||o.e, actual:o.actual||o.a, input:o.input||o.i, error:o.error||o.e};
+          }catch(e){return null}
+        };
+        const results = lines.map(parse).filter(Boolean);
+        const unesc = v=>String(v).replace(/<pipe>/g,'|').replace(/<nl>/g,'\n');
         const allPass = results.every(r=>r.pass);
-        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${r.test||i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input||JSON.stringify(r.args))}</div><div>Expected: ${esc(r.expected?JSON.stringify(r.expected):'')}</div><div>Got: ${esc(r.error||(r.actual?JSON.stringify(r.actual):''))}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed.</div>`:''}`;
+        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${r.test||i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(unesc(r.input||''))}</div><div>Expected: ${esc(unesc(r.expected||''))}</div><div>Got: ${esc(unesc(r.error||r.actual||''))}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed.</div>`:''}`;
         render(); return;
       }
     }
