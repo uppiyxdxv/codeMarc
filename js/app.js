@@ -803,7 +803,12 @@ ${body}
   public static void main(String[] a){
     Solution s = new Solution();
     Object r = s.${fn}(${tests[0].args.map(toJava).join(',')});
-    System.out.println(r!=null&&r.getClass().isArray()?java.util.Arrays.deepToString(new Object[]{r}):String.valueOf(r));
+    if(r==null) System.out.println("null");
+    else if(r.getClass().isArray()){if(r instanceof int[]) System.out.println(java.util.Arrays.toString((int[])r));
+    else if(r instanceof String[]) System.out.println(java.util.Arrays.toString((String[])r));
+    else if(r instanceof int[][]) System.out.println(java.util.Arrays.deepToString((int[][])r));
+    else System.out.println(java.util.Arrays.toString((Object[])r));}
+    else System.out.println(String.valueOf(r));
   }
 }`;
   }
