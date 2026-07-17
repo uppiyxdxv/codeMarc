@@ -797,19 +797,13 @@ for i,t in enumerate(tests):
       }
       return '""+v';
     };
-    const toStr = (v)=>{
-      if(v===null||v===undefined) return '"null"';
-      if(typeof v==='boolean') return '""+'+v;
-      if(typeof v==='number') return '""+'+v;
-      if(typeof v==='string') return '"'+v.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"';
-      return '""+v';
-    };
+    const s = JSON.stringify;
     const tcalls = tests.map((t,i)=>{
       const jArgs = t.args.map(toJava);
-      const inpStr = JSON.stringify(t.args).replace(/"/g,'\\"');
-      const eStr = toStr(t.expected);
-      const eqCheck = Array.isArray(t.expected)?'java.util.Arrays.equals((int[])r,(int[])'+eStr+')':'r.equals('+eStr+')';
-      return `try{Object r=s.${fn}(${jArgs.join(',')});String rs=r!=null&&r.getClass().isArray()?java.util.Arrays.deepToString(new Object[]{r}).replaceAll("^\\\\[","").replaceAll("\\\\]$",""):""+r;System.out.println("{\\"test\\":"+${i+1}+",\\"pass\\":"+(${eqCheck}?"true":"false")+",\\"actual\\":\\""+rs.replaceAll("\\\\"","'")+"\\",\\"expected\\":\\""+${eStr}+"\\",\\"input\\":\\"${inpStr}\\"}");}catch(Exception e){System.out.println("{\\"test\\":"+${i+1}+",\\"pass\\":false,\\"error\\":\\""+e.getMessage().replace("\\\\"","'")+"\\"}");}`;
+      const inp = s(t.args).replace(/"/g,'\\"');
+      const exp = s(t.expected).replace(/"/g,'\\"');
+      const arrEq = Array.isArray(t.expected)?'java.util.Arrays.equals((int[])r,new int[]{'+t.expected.join(',')+'})':'String.valueOf(r).equals('+s(t.expected)+')';
+      return `try{Object r=s.${fn}(${jArgs.join(',')});String rs=r!=null&&r.getClass().isArray()?java.util.Arrays.toString((int[])r):String.valueOf(r);System.out.println("{\\"t\\":"+${i+1}+",\\"p\\":"+(${arrEq}?1:0)+",\\"a\\":\\""+rs.replace("\\\\"","'")+"\\",\\"e\\":\\"${exp}\\",\\"i\\":\\"${inp}\\"}");}catch(Exception e){System.out.println("{\\"t\\":"+${i+1}+",\\"p\\":0,\\"e\\":\\""+e.getMessage().replace("\\\\"","'")+"\\",\\"i\\":\\"${inp}\\"}");}`;
     }).join('\n    ');
     return `import java.util.*;
 public class Solution {
@@ -851,9 +845,9 @@ function runCodeRemote(q, lang, code, onlySample){
     if(lang==='python'||lang==='java'){
       const lines = stdOut.split('\n').filter(l=>l.startsWith('{'));
       if(lines.length){
-        const results = lines.map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean);
+        const results = lines.map(l=>{try{const o=JSON.parse(l);return {test:o.test||o.t,pass:o.pass||o.p,expected:o.expected||o.e,actual:o.actual||o.a,input:o.input||o.i,error:o.error||o.e}}catch(e){return null}}).filter(Boolean);
         const allPass = results.every(r=>r.pass);
-        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${r.test||i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input||JSON.stringify(r.args))}</div><div>Expected: ${esc(JSON.stringify(r.expected))}</div><div>Got: ${esc(r.error||JSON.stringify(r.actual))}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed.</div>`:''}`;
+        state.runResult=`${results.map((r,i)=>`<div class="tcase ${r.pass?'pass':'fail'}"><div class="thead"><span>Test ${r.test||i+1}</span><span class="${r.pass?'ok':'no'}">${r.pass?'✓ Passed':'✗ Failed'}</span></div><div>Input: ${esc(r.input||JSON.stringify(r.args))}</div><div>Expected: ${esc(r.expected?JSON.stringify(r.expected):'')}</div><div>Got: ${esc(r.error||(r.actual?JSON.stringify(r.actual):''))}</div></div>`).join('')}${(!onlySample&&allPass)?markSolved(q):''}${(!onlySample&&!allPass)?`<div class="note-box">Not all passed.</div>`:''}`;
         render(); return;
       }
     }
