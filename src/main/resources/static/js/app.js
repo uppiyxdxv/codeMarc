@@ -170,7 +170,7 @@ const state = {
   code:{}, lang:{}, runResult:null,
   quizIdx:0, quizAnswers:{}, quizSubmitted:false,
   dropdownOpen:false, authMsg:null, confirmSubmitId:null,
-  interview:{phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:''},
+  interview:{phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:'',timerStart:0,timerMax:120,isRecording:false,timerInterval:null,spoken:false},
   courses:[], currentCourse:null, assignments:{}, submissions:{},
 };
 
@@ -365,13 +365,17 @@ async function generateInterview(){
       const text = await callAnthropic(sys, `Target role: ${role}\nResume:\n${resume}`, apiKey);
       iv.questions = extractJSON(text).questions;
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-      iv.loading=false; iv.phase='session';
+      iv.loading=false; iv.phase='session'; render();
+      startInterviewTimer();
+      setTimeout(()=>speakQuestion(iv.questions[0]),300);
     }catch(e){ iv.loading=false; iv.error='Claude error — check your API key and try again, or leave key empty for offline mode.'; render(); return; }
   } else {
     setTimeout(()=>{
       iv.questions = generateInterviewQuestions(resume, role);
       iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
       iv.loading=false; iv.phase='session'; render();
+      startInterviewTimer();
+      setTimeout(()=>speakQuestion(iv.questions[0]),300);
     }, 700);
     return;
   }
@@ -380,7 +384,10 @@ async function generateInterview(){
 
 async function submitInterviewAnswer(){
   const iv = state.interview;
-  const ans = document.getElementById('iv-answer').value.trim();
+  stopRecording();
+  stopInterviewTimer();
+  const ta = document.getElementById('iv-answer');
+  const ans = ta ? ta.value.trim() : '';
   if(!ans){ iv.error='Write an answer before submitting.'; render(); return; }
   iv.error=null;
   if(iv.apiKey){
@@ -406,12 +413,19 @@ async function submitInterviewAnswer(){
 
 function nextInterviewQuestion(){
   const iv = state.interview;
-  if(iv.currentQ<iv.questions.length-1){ iv.currentQ++; render(); }
+  if(iv.currentQ<iv.questions.length-1){
+    iv.currentQ++; render();
+    startInterviewTimer();
+    speakQuestion(iv.questions[iv.currentQ]);
+  }
   else finishInterview();
 }
 
 async function finishInterview(){
   const iv = state.interview;
+  stopInterviewTimer();
+  stopRecording();
+  speechSynthesis.cancel();
   const scores = iv.feedbacks.map(f=>f.score).filter(s=>typeof s==='number');
   const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10)/10 : null;
   if(iv.apiKey){
@@ -439,9 +453,86 @@ async function finishInterview(){
 }
 
 function restartInterview(){
+  stopInterviewTimer();
   const prevKey = state.interview.apiKey || '';
-  state.interview={phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:prevKey};
+  state.interview={phase:'setup',resumeText:'',role:'',questions:[],currentQ:0,answers:[],feedbacks:[],loading:false,error:null,overall:null,apiKey:prevKey,timerStart:0,timerMax:120,isRecording:false,timerInterval:null,spoken:false};
   render();
+}
+
+/* ---- Audio Interview (TTS + STT) ---- */
+function speakQuestion(text){
+  if(!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(text);
+  u.rate=0.95; u.pitch=1;
+  const voices=speechSynthesis.getVoices();
+  const en=voices.find(v=>v.lang.startsWith('en')&&v.name.includes('Google'))||voices.find(v=>v.lang.startsWith('en'));
+  if(en) u.voice=en;
+  state.interview.spoken=true;
+  u.onend=()=>{state.interview.spoken=false;render();};
+  u.onerror=()=>{state.interview.spoken=false;render();};
+  speechSynthesis.speak(u);
+  render();
+}
+
+let _recognition=null;
+function startRecording(){
+  const iv=state.interview;
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ iv.error='Speech recognition not supported in this browser. Use Chrome or Edge.'; render(); return; }
+  if(_recognition) try{_recognition.abort();}catch(e){}
+  _recognition=new SR();
+  _recognition.lang='en-US'; _recognition.interimResults=true; _recognition.continuous=true;
+  let transcript='';
+  _recognition.onresult=e=>{
+    let final='';
+    for(let i=0;i<e.results.length;i++){
+      const t=e.results[i][0].transcript;
+      if(e.results[i].isFinal) final+=t+' ';
+      else transcript=e.results[i][0].transcript;
+    }
+    if(final) transcript=final;
+    const ta=document.getElementById('iv-answer');
+    if(ta) ta.value=transcript;
+  };
+  _recognition.onend=()=>{ iv.isRecording=false; render(); };
+  _recognition.onerror=e=>{ if(e.error!=='aborted'){ iv.error='Recognition error: '+e.error; } iv.isRecording=false; render(); };
+  iv.isRecording=true; iv.error=null;
+  _recognition.start();
+  render();
+}
+function stopRecording(){
+  if(_recognition) try{_recognition.stop();}catch(e){}
+  state.interview.isRecording=false;
+  render();
+}
+
+function startInterviewTimer(){
+  const iv=state.interview;
+  iv.timerStart=Date.now();
+  iv.timerMax=120;
+  clearInterval(iv.timerInterval);
+  iv.timerInterval=setInterval(()=>{
+    iv.timerMax=Math.max(0,120-Math.floor((Date.now()-iv.timerStart)/1000));
+    const el=document.getElementById('iv-timer-fill');
+    if(el) el.style.width=((iv.timerMax/120)*100)+'%';
+    const tx=document.getElementById('iv-timer-text');
+    if(tx) tx.textContent=iv.timerMax+'s';
+    if(iv.timerMax<=0){
+      clearInterval(iv.timerInterval);
+      autoSubmitAnswer();
+    }
+  },500);
+}
+function stopInterviewTimer(){
+  clearInterval(state.interview.timerInterval);
+}
+function autoSubmitAnswer(){
+  const iv=state.interview;
+  if(iv.phase!=='session') return;
+  const ta=document.getElementById('iv-answer');
+  if(ta && ta.value.trim()) submitInterviewAnswer();
+  else { iv.answers[iv.currentQ]='(no answer)'; nextInterviewQuestion(); }
 }
 
 /* ---- RENDER ---- */
@@ -946,10 +1037,19 @@ function renderInterview(){
   if(iv.phase==='session'){
     const q=iv.questions[iv.currentQ]; const fb=iv.feedbacks[iv.currentQ];
     return `${navBar()}<div class="page-head"><h1>🎤 Mock — ${esc(iv.role)}</h1></div>
-    <div class="interview-hero"><div class="interview-card"><div class="qcounter">Q${iv.currentQ+1}/${iv.questions.length}</div>
-    <h4 style="font-size:15px;margin-bottom:14px;">${esc(q)}</h4>
+    <div class="interview-hero"><div class="interview-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;"><div class="qcounter">Q${iv.currentQ+1}/${iv.questions.length}</div><div class="timer-text" id="iv-timer-text">${iv.timerMax}s</div></div>
+    <div class="timer-bar"><div class="timer-fill" id="iv-timer-fill" style="width:${(iv.timerMax/120)*100}%"></div></div>
+    <div class="audio-row">
+      <button class="speak-btn ${speechSynthesis.speaking?'playing':''}" onclick="speakQuestion('${esc(q).replace(/'/g,"\\'")}')" title="Read question aloud">🔊</button>
+      <h4 style="font-size:15px;margin:0;flex:1;">${esc(q)}</h4>
+    </div>
     ${iv.error?`<div class="form-msg err">${esc(iv.error)}</div>`:''}
-    <textarea id="iv-answer" rows="5" placeholder="Your answer..." ${fb?'disabled':''}>${fb?esc(iv.answers[iv.currentQ]):''}</textarea>
+    <textarea id="iv-answer" rows="5" placeholder="Type your answer or tap the mic to speak..." ${fb?'disabled':''}>${fb?esc(iv.answers[iv.currentQ]):''}</textarea>
+    <div class="mic-wrap">
+      <button class="mic-btn ${iv.isRecording?'recording':''}" onclick="${iv.isRecording?'stopRecording()':'startRecording()'}" title="${iv.isRecording?'Stop recording':'Speak your answer'}">${iv.isRecording?'⏹':'🎙️'}</button>
+    </div>
+    <div class="rec-status ${iv.isRecording?'on':''}">${iv.isRecording?'Listening... Speak now':'Tap the mic to answer by voice'}</div>
     ${iv.loading?`<div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Reviewing...</div>`:''}
     ${fb?`<div class="feedback-box"><span class="score-badge ${fb.score>=7?'hi':fb.score>=4?'mid':'lo'}">${fb.score?fb.score+'/10':'Feedback'}</span><div style="margin-top:6px;">${esc(fb.feedback)}</div></div>
     <button class="btn btn-primary" style="width:100%;margin-top:14px;" onclick="nextInterviewQuestion()">${iv.currentQ<iv.questions.length-1?'Next →':'See summary →'}</button>`:
@@ -957,10 +1057,14 @@ function renderInterview(){
     </div></div>${footer()}`;
   }
   const o=iv.overall;
+  const scores=iv.feedbacks.map(f=>f.score).filter(s=>typeof s==='number');
+  const barColor=s=>s>=8?'var(--success)':s>=6?'var(--brand)':s>=4?'var(--warn)':'var(--danger)';
+  const perfBars=scores.map((s,i)=>`<div class="perf-bar" style="height:${Math.max(s*3.2,12)}px;background:${barColor(s)};"><span>${s}</span><span>Q${i+1}</span></div>`).join('');
   return `${navBar()}<div class="page-head"><h1>🎤 Interview summary</h1></div><div class="interview-hero">
     ${!o?`<div class="interview-card"><div class="loader-line"><span class="loader-dot"></span><span class="loader-dot"></span><span class="loader-dot"></span> Generating summary...</div></div>`:
     `<div class="interview-card">${o.avg!==null?`<span class="score-badge ${o.avg>=7?'hi':o.avg>=4?'mid':'lo'}">Avg: ${o.avg.toFixed(1)}/10</span>`:''}
     <p style="margin-top:12px;font-size:13.5px;color:#C7D0E6;">${esc(o.summary||'')}</p>
+    ${scores.length?`<h5 style="margin-top:14px;color:var(--text-dim);font-size:12px;">Per-question scores</h5><div class="perf-grid">${perfBars}</div>`:''}
     ${o.strengths&&o.strengths.length?`<h5 style="margin-top:14px;color:var(--success);font-size:12px;">Strengths</h5><ul style="margin:6px 0 0 16px;font-size:13px;color:var(--text-muted);">${o.strengths.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>`:''}
     ${o.improve&&o.improve.length?`<h5 style="margin-top:14px;color:var(--warn);font-size:12px;">Room to improve</h5><ul style="margin:6px 0 0 16px;font-size:13px;color:var(--text-muted);">${o.improve.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>`:''}
     </div>
