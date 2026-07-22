@@ -277,79 +277,14 @@ function runSqlProblem(problem, code){
   return {pass:missing.length===0, missingCount:missing.length, total:problem.requiredPatterns.length};
 }
 
-/* ---- Mock Interview (backend proxy AI + offline fallback) ---- */
-async function callAnthropic(system, user, apiKey){
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 35000);
-  const res = await fetch('/api/ai/anthropic', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({apiKey,system,user}),
-    signal: controller.signal
+/* ---- Mock Interview (Backend API + offline fallback) ---- */
+async function callInterviewAPI(endpoint, body){
+  const res = await fetch(API_BASE+'/api/interview/'+endpoint, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)
   });
-  clearTimeout(timer);
-  if(!res.ok){ const e=await res.json().catch(()=>({})); throw new Error(e.error||'Proxy request failed ('+res.status+')'); }
-  const data = await res.json();
-  return (data.content||[]).map(b=>b.text||'').join('\n');
-}
-function extractJSON(text){
-  const cleaned = text.replace(/```json/gi,'').replace(/```/g,'').trim();
-  const s = Math.min(cleaned.indexOf('{'), cleaned.indexOf('['));
-  const candidate = s>=0 ? cleaned.slice(s) : cleaned;
-  try{ return JSON.parse(candidate); }catch(e){ return {questions:['Tell me about yourself.','Why do you want this role?','Describe a challenge you overcame.','Where do you see yourself in 5 years?','Why should we hire you?','Tell me about a time you worked in a team.']}; }
-}
-
-const IV_QUESTIONS = {
-  behavioral: [
-    'Tell me about a time you faced a challenge. How did you handle it?',
-    'Describe a situation where you worked as part of a team to achieve a goal.',
-    'Tell me about a time you received feedback. How did you respond?',
-    'Describe a situation where you had to meet a tight deadline.',
-    'Tell me about a project you are most proud of and why.',
-    'Describe a time you had to learn something new quickly.',
-    'Tell me about a conflict you resolved with someone.',
-    'Describe a time you showed leadership or initiative.',
-    'Tell me about a time you made a mistake and what you learned.',
-    'Describe a time you went above and beyond expectations.',
-  ],
-  motivation: [
-    'Why did you choose your career path?',
-    'What is your greatest professional achievement?',
-    'Where do you see yourself in five years?',
-    'What motivates you to do your best work?',
-    'Why are you interested in this role?',
-  ],
-};
-
-function generateInterviewQuestions(text, role){
-  const lower = text.toLowerCase();
-  const tech = [...new Set((lower.match(/\b(java|python|javascript|react|angular|spring|sql|mongodb|node|docker|aws|gcp|azure|typescript|go|rust|c\+\+|ruby|php|swift|kotlin|flask|django|vue|git|kubernetes|tensorflow|pytorch|machine learning|data science|frontend|backend|fullstack|api|cloud|devops|linux)\b/g)||[]))].slice(0,2);
-  const qs = []; const used = new Set();
-  const pick = (pool) => { const opts = pool.filter(q=>!used.has(q)); if(!opts.length) return pool[0]; const p = opts[Math.floor(Math.random()*opts.length)]; used.add(p); return p; };
-  for(let i=0;i<3;i++) qs.push(pick(IV_QUESTIONS.behavioral));
-  qs.push(pick(IV_QUESTIONS.motivation).replace('this role',`the ${role} role`));
-  if(tech.length) qs.push(`Your background includes ${tech.join(' and ')}. Can you describe a project where you applied these skills?`);
-  qs.push(`Looking at your experience, what makes you a strong fit for this ${role} role?`);
-  while(qs.length<6) qs.push(pick(IV_QUESTIONS.behavioral));
-  return qs.slice(0,7);
-}
-
-function scoreAnswer(question, answer){
-  const a = answer.toLowerCase(); const wc = answer.split(/\s+/).length;
-  let s = 5; const fb = [];
-  if(wc<15){ s-=2; fb.push('Too brief — expand with specific details.'); } else if(wc>25) s+=1;
-  if(/for example|specifically|one time|i handled|i resolved|i led|i created|i built|i implemented/i.test(a)){ s+=2; fb.push('Good specific example.'); }
-  else { s-=1; fb.push('Include a real example from your experience.'); }
-  const kw = ['communicat','problem','team','leader','result','achieved','collaborat','solved','learn','mentor','delivered','improved','launched'];
-  const match = kw.filter(w=>a.includes(w)).length;
-  if(match>=3) s+=1; else fb.push('Weave in relevant skill keywords.');
-  if(/i don'?t know/i.test(a)) s=Math.min(s,3);
-  if(/achieved|result|delivered|increased|decreased|saved|improved by|reduced/i.test(a)){ s+=1; fb.push('Good use of measurable results.'); }
-  s = Math.max(1,Math.min(10,s));
-  const tips = ['Try the STAR method (Situation, Task, Action, Result).','Quantify your impact with numbers.','Connect your answer to what the role needs.','Practice your delivery for more confidence.','Be more specific about your contribution.'];
-  if(!fb.length) fb.push('Clear and relevant. Keep this level of detail.');
-  fb.push(tips[Math.floor(Math.random()*tips.length)]);
-  return {score:s, feedback:fb.slice(0,2).join(' ')};
+  if(!res.ok) throw new Error('Server error ('+res.status+')');
+  return res.json();
 }
 
 async function generateInterview(){
@@ -359,26 +294,16 @@ async function generateInterview(){
   const apiKey = document.getElementById('iv-apikey').value.trim();
   if(resume.length<40){ iv.error='Paste more of your resume (experience, projects, skills).'; render(); return; }
   iv.resumeText=resume; iv.role=role; iv.apiKey=apiKey; iv.error=null; iv.loading=true; iv.phase='loading'; render();
-  if(apiKey){
-    try{
-      const sys="You are an experienced HR interviewer. Given a resume and target role, write 6 HR-round interview questions. Respond with ONLY valid JSON: {\"questions\":[\"...\",\"...\"]}";
-      const text = await callAnthropic(sys, `Target role: ${role}\nResume:\n${resume}`, apiKey);
-      iv.questions = extractJSON(text).questions;
-      iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-      iv.loading=false; iv.phase='session'; render();
-      startInterviewTimer();
-      setTimeout(()=>speakQuestion(iv.questions[0]),300);
-    }catch(e){ iv.loading=false; iv.error='Claude error — check your API key and try again, or leave key empty for offline mode.'; render(); return; }
-  } else {
-    setTimeout(()=>{
-      iv.questions = generateInterviewQuestions(resume, role);
-      iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
-      iv.loading=false; iv.phase='session'; render();
-      startInterviewTimer();
-      setTimeout(()=>speakQuestion(iv.questions[0]),300);
-    }, 700);
+  try{
+    const data = await callInterviewAPI('generate', {resume, role, apiKey});
+    iv.questions = data.questions;
+    iv.currentQ=0; iv.answers=[]; iv.feedbacks=[]; iv.overall=null;
+    iv.loading=false; iv.phase='session'; render();
+    startInterviewTimer();
+    setTimeout(()=>speakQuestion(iv.questions[0]),300);
+  }catch(e){
+    iv.error='Failed to generate questions — '+e.message; iv.loading=false; render();
   }
-  render();
 }
 
 async function submitInterviewAnswer(){
@@ -389,25 +314,16 @@ async function submitInterviewAnswer(){
   const ans = ta ? ta.value.trim() : '';
   if(!ans){ iv.error='Write an answer before submitting.'; render(); return; }
   iv.error=null;
-  if(iv.apiKey){
-    iv.loading=true; render();
-    try{
-      const sys="You are an HR interview coach. Given one HR question and the candidate's answer, give brief feedback. Respond with ONLY JSON: {\"score\":<integer 1-10>,\"feedback\":\"2-3 sentences\"}";
-      const text = await callAnthropic(sys, `Question: ${iv.questions[iv.currentQ]}\nAnswer: ${ans}`, iv.apiKey);
-      const parsed = extractJSON(text);
-      iv.answers[iv.currentQ]=ans;
-      iv.feedbacks[iv.currentQ]={score:parsed.score,feedback:parsed.feedback};
-    }catch(e){
-      iv.answers[iv.currentQ]=ans;
-      iv.feedbacks[iv.currentQ]={score:null,feedback:'Feedback unavailable from AI.'};
-    }
-    iv.loading=false; render();
-  } else {
-    const fb = scoreAnswer(iv.questions[iv.currentQ], ans);
+  iv.loading=true; render();
+  try{
+    const data = await callInterviewAPI('evaluate', {question:iv.questions[iv.currentQ], answer:ans, apiKey:iv.apiKey});
     iv.answers[iv.currentQ]=ans;
-    iv.feedbacks[iv.currentQ]={score:fb.score, feedback:fb.feedback};
-    render();
+    iv.feedbacks[iv.currentQ]={score:data.score, feedback:data.feedback};
+  }catch(e){
+    iv.answers[iv.currentQ]=ans;
+    iv.feedbacks[iv.currentQ]={score:null, feedback:'Feedback unavailable.'};
   }
+  iv.loading=false; render();
 }
 
 function nextInterviewQuestion(){
@@ -427,28 +343,23 @@ async function finishInterview(){
   speechSynthesis.cancel();
   const scores = iv.feedbacks.map(f=>f.score).filter(s=>typeof s==='number');
   const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10)/10 : null;
-  if(iv.apiKey){
-    iv.loading=true; iv.phase='summary'; render();
-    try{
-      const sys="You are an HR interview coach summarizing a mock interview. Respond with ONLY JSON: {\"summary\":\"3-4 sentences\",\"strengths\":[\"...\",\"...\"],\"improve\":[\"...\",\"...\"]}";
-      const transcript = iv.questions.map((q,i)=>`Q${i+1}: ${q}\nA${i+1}: ${iv.answers[i]||''}`).join('\n\n');
-      const text = await callAnthropic(sys, `Role: ${iv.role}\n\nTranscript:\n${transcript}`, iv.apiKey);
-      iv.overall = Object.assign({avg}, extractJSON(text));
-    }catch(e){ iv.overall={avg,summary:'Summary unavailable.',strengths:[],improve:[]}; }
-    iv.loading=false; render();
-  } else {
+  iv.loading=true; iv.phase='summary'; render();
+  try{
+    const transcript = iv.questions.map((q,i)=>({question:q, answer:iv.answers[i]||'', score:iv.feedbacks[i]?.score||0}));
+    const data = await callInterviewAPI('summary', {transcript, role:iv.role, apiKey:iv.apiKey});
+    iv.overall = Object.assign({avg}, data.overall);
+  }catch(e){
     const str = []; const imp = [];
-    if(avg>=7){ str.push('Strong overall performance with detailed answers.'); str.push('Good use of examples.'); }
-    else if(avg>=4){ imp.push('Add more specific examples. Use STAR method.'); str.push('Solid foundation with key points covered.'); }
+    if(avg>=7){ str.push('Strong overall performance.'); str.push('Good use of examples.'); }
+    else if(avg>=4){ imp.push('Add more specific examples. Use STAR method.'); }
     else { imp.push('Expand answers with context, action, and result.'); imp.push('Quantify your achievements.'); }
-    if(scores.some(s=>s<5)) imp.push('Practice answering behavioral questions with real stories from your experience.');
-    let summary = avg>=8 ? `Excellent interview! Strong communication and compelling examples for the ${iv.role} role.` :
-      avg>=6 ? `Good effort! Your answers show relevant experience. Focus on STAR structure and metrics for even stronger responses.` :
-      avg>=4 ? `You have good material but need to work on structure and delivery. Prepare 5-7 stories from your experience.` :
-      `This is a good starting point. Write down specific achievements and practice describing them in 2-minute responses.`;
-    iv.overall = {avg, summary, strengths:str.slice(0,3), improve:imp.slice(0,3)};
-    iv.phase='summary'; render();
+    let summary = avg>=8 ? `Excellent interview! Strong communication for the ${iv.role} role.` :
+      avg>=6 ? `Good effort! Focus on STAR structure for even stronger responses.` :
+      avg>=4 ? `Good material but work on structure and delivery.` :
+      `A good starting point. Practice describing achievements in 2-minute responses.`;
+    iv.overall = {avg, summary, strengths:str, improve:imp};
   }
+  iv.loading=false; render();
 }
 
 function restartInterview(){
