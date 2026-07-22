@@ -291,12 +291,21 @@ function runSqlProblem(problem, code){
 
 /* ---- Mock Interview (Backend API + offline fallback) ---- */
 async function callInterviewAPI(endpoint, body){
-  const res = await fetch(API_BASE+'/api/interview/'+endpoint, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)
-  });
-  if(!res.ok) throw new Error('Server error ('+res.status+')');
-  return res.json();
+  const ctrl = new AbortController();
+  const tmr = setTimeout(()=>ctrl.abort(), 45000);
+  try{
+    const res = await fetch(API_BASE+'/api/interview/'+endpoint, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body), signal:ctrl.signal
+    });
+    clearTimeout(tmr);
+    if(!res.ok) throw new Error('Server error ('+res.status+')');
+    return res.json();
+  }catch(e){
+    clearTimeout(tmr);
+    if(e.name==='AbortError') throw new Error('Server is starting up (Render cold start). Please try again in 30s.');
+    throw e;
+  }
 }
 
 async function generateInterview(){
