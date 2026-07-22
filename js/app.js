@@ -162,7 +162,8 @@ const SAVE_KEY = 'codearena_state';
 const state = {
   view:'landing',
   users:{'demo@codearena.io':{password:'demo123',name:'Demo Learner',avatar:'🧑‍💻',solved:{},points:0,role:'STUDENT'},
-         'teacher@codearena.io':{password:'teacher123',name:'Prof. Smith',avatar:'👩‍🏫',solved:{},points:0,role:'TEACHER'}},
+         'teacher@codearena.io':{password:'teacher123',name:'Prof. Smith',avatar:'👩‍🏫',solved:{},points:0,role:'TEACHER'},
+         'pallolla.upendra@gmail.com':{password:'Uppiyxdxv@2004',name:'Upendra Admin',avatar:'👨‍💼',solved:{},points:0,role:'ADMIN'}},
   currentUser:null,
   token:null,
   currentDomain:null,
@@ -477,6 +478,7 @@ function navBar(){
       ${u?`<a onclick="nav('courses')" class="${state.view==='courses'||state.view==='course-detail'||state.view==='assignment-detail'?'active':''}">Classroom</a>`:''}
       ${u?`<a onclick="nav('quiz')" class="${state.view==='quiz'?'active':''}">Quiz</a>`:''}
       ${u?`<a onclick="nav('interview')" class="${state.view==='interview'?'active':''}">Interview</a>`:''}
+      ${u&&u.role==='ADMIN'?`<a onclick="nav('admin')" class="${state.view==='admin'?'active':''}" style="color:var(--warn);">Admin</a>`:''}
       <a onclick="nav('pricing')" class="${state.view==='pricing'?'active':''}">Pricing</a>
     </div></div>
     <div class="nav-right">${u ? `
@@ -1265,6 +1267,99 @@ function seedDemoData(){
   saveState();
 }
 
+/* ---- ADMIN PANEL ---- */
+function renderAdmin(){
+  if(!state.currentUser||state.currentUser.role!=='ADMIN') return renderLogin();
+  const probs = state._adminProblems||[];
+  return `${navBar()}<div class="page-head"><h1>⚙️ Admin Panel</h1><p>Manage coding problems.</p></div>
+  <div style="max-width:900px;margin:0 auto;padding:0 20px 40px;">
+  <div class="interview-card" style="margin-bottom:16px;">
+    <h4 style="margin-bottom:12px;">Add / Edit Problem</h4>
+    <div class="grid-2"><div class="field"><label>ID</label><input id="ap-id" placeholder="e.g. j5"></div>
+    <div class="field"><label>Domain</label><select id="ap-domain"><option>java</option><option>python</option><option>c</option><option>sql</option><option>mongodb</option></select></div></div>
+    <div class="field"><label>Title</label><input id="ap-title" placeholder="Two Sum"></div>
+    <div class="grid-2"><div class="field"><label>Difficulty</label><select id="ap-diff"><option>easy</option><option>medium</option><option>hard</option></select></div>
+    <div class="field"><label>Points</label><input id="ap-pts" type="number" value="10"></div></div>
+    <div class="field"><label>Topic</label><input id="ap-topic" placeholder="Arrays"></div>
+    <div class="field"><label>Description</label><textarea id="ap-desc" rows="3"></textarea></div>
+    <div class="grid-2"><div class="field"><label>Sample Input</label><input id="ap-in"></div>
+    <div class="field"><label>Sample Output</label><input id="ap-out"></div></div>
+    <div class="field"><label>Constraints</label><input id="ap-con"></div>
+    <div class="field"><label>Starter Code</label><textarea id="ap-code" rows="4" style="font-family:var(--mono);font-size:13px;"></textarea></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-primary" onclick="adminSaveProblem()">Save Problem</button>
+      <button class="btn" onclick="adminClearForm()">Clear</button>
+    </div>
+  </div>
+  <div class="interview-card">
+    <h4 style="margin-bottom:12px;">All Problems (${probs.length})</h4>
+    <div style="max-height:400px;overflow-y:auto;">
+    ${probs.map(p=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div><span style="font-family:var(--mono);font-size:11px;color:var(--brand);margin-right:8px;">${esc(p.id)}</span>
+      <span style="font-size:13px;font-weight:600;">${esc(p.title)}</span>
+      <span style="font-size:11px;color:var(--text-dim);margin-left:8px;">${esc(p.domain)} · ${esc(p.difficulty)} · ${p.points}pts</span></div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-sm" onclick="adminEditProblem('${esc(p.id)}')">Edit</button>
+        <button class="btn btn-sm" style="color:var(--danger);" onclick="adminDeleteProblem('${esc(p.id)}')">Delete</button>
+      </div>
+    </div>`).join('')}
+    </div>
+  </div></div>${footer()}`;
+}
+async function adminLoadProblems(){
+  try{
+    const res = await fetch(API_BASE+'/api/admin/problems');
+    const data = await res.json();
+    state._adminProblems = data.data || data || [];
+  }catch(e){ state._adminProblems = []; }
+}
+function adminClearForm(){
+  ['ap-id','ap-title','ap-topic','ap-desc','ap-in','ap-out','ap-con','ap-code'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+}
+function adminEditProblem(id){
+  const p = (state._adminProblems||[]).find(x=>x.id===id);
+  if(!p) return;
+  const set=(id,v)=>{const e=document.getElementById(id);if(e)e.value=v||'';};
+  set('ap-id',p.id); set('ap-domain',p.domain); set('ap-title',p.title);
+  set('ap-diff',p.difficulty); set('ap-pts',p.points); set('ap-topic',p.topic);
+  set('ap-desc',p.description); set('ap-in',p.sampleInput); set('ap-out',p.sampleOutput);
+  set('ap-con',p.constraints); set('ap-code',p.starterCode);
+  window.scrollTo(0,0);
+}
+async function adminSaveProblem(){
+  const body={
+    id:document.getElementById('ap-id').value.trim(),
+    domain:document.getElementById('ap-domain').value,
+    title:document.getElementById('ap-title').value.trim(),
+    difficulty:document.getElementById('ap-diff').value,
+    points:parseInt(document.getElementById('ap-pts').value)||10,
+    topic:document.getElementById('ap-topic').value.trim(),
+    description:document.getElementById('ap-desc').value.trim(),
+    sampleInput:document.getElementById('ap-in').value.trim(),
+    sampleOutput:document.getElementById('ap-out').value.trim(),
+    constraints:document.getElementById('ap-con').value.trim(),
+    starterCode:document.getElementById('ap-code').value.trim(),
+    mode:'js', testCasesJson:'[]'
+  };
+  if(!body.id||!body.title){alert('ID and Title required');return;}
+  const existing = (state._adminProblems||[]).find(p=>p.id===body.id);
+  try{
+    if(existing){
+      await fetch(API_BASE+'/api/admin/problems/'+body.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    }else{
+      await fetch(API_BASE+'/api/admin/problems',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    }
+    await adminLoadProblems(); render();
+  }catch(e){alert('Save failed: '+e.message);}
+}
+async function adminDeleteProblem(id){
+  if(!confirm('Delete problem '+id+'?')) return;
+  try{
+    await fetch(API_BASE+'/api/admin/problems/'+id,{method:'DELETE'});
+    await adminLoadProblems(); render();
+  }catch(e){alert('Delete failed: '+e.message);}
+}
+
 /* ---- MAIN RENDER ---- */
 function render(){
   const app = document.getElementById('app');
@@ -1279,6 +1374,7 @@ function render(){
     case 'coding': html=renderCoding(); break;
     case 'quiz': html=renderQuiz(); break;
     case 'interview': html=renderInterview(); break;
+    case 'admin': html=renderAdmin(); break;
     case 'settings': html=renderSettings(); break;
     case 'pricing': html=renderPricing(); break;
     case 'courses': html=renderCourses(); break;
@@ -1287,6 +1383,7 @@ function render(){
     default: html=renderLanding();
   }
   app.innerHTML = html;
+  if(state.view==='admin') adminLoadProblems();
   if(state.view==='coding'){
     const q = QUESTIONS.find(x=>x.id===state.currentProblem);
     const lang = state.lang[q?.id];
