@@ -855,8 +855,8 @@ function runCodeRemote(q, lang, code, onlySample){
           try{
             if(l.startsWith('JR|')){
               const parts = l.split('|');
-              const err = parts[3]?.startsWith('<err>');
-              return {test:+parts[1], pass:!err, actual:err?parts[3].replace('<err>',''):parts[3], expected:parts[4], input:parts[5]};
+              const isErr = parts[2]?.startsWith('<err>');
+              return {test:+parts[1], pass:!isErr, actual:isErr?parts[2].replace('<err>',''):parts[2], expected:parts[3], input:parts[4]};
             }
             const o=JSON.parse(l);
             return {test:o.test||o.t, pass:o.pass||o.p, expected:o.expected||o.e, actual:o.actual||o.a, input:o.input||o.i, error:o.error||o.e};
