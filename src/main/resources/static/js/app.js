@@ -377,7 +377,6 @@ async function generateInterview(){
       startInterviewTimer();
       setTimeout(()=>speakQuestion(iv.questions[0]),300);
     }, 700);
-    return;
   }
   render();
 }
