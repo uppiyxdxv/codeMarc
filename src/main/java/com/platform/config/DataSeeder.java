@@ -46,6 +46,12 @@ public class DataSeeder implements CommandLineRunner {
             teacher.setRole(User.Role.TEACHER);
             userRepository.save(teacher);
         }
+        if (!userRepository.existsByEmail("pallolla.upendra@gmail.com")) {
+            User admin = new User("Upendra Admin", "pallolla.upendra@gmail.com", passwordEncoder.encode("Uppiyxdxv@2004"));
+            admin.setAvatar("👨‍💼");
+            admin.setRole(User.Role.ADMIN);
+            userRepository.save(admin);
+        }
     }
 
     private void seedProblems() {
